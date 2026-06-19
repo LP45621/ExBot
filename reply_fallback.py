@@ -51,41 +51,51 @@ EMOTION_CORPUS_MAP = {
         ("emotional_support", "sad"),
         ("comfort", None),
         ("encouragement", None),
+        ("intimacy_layers", "protective"),
+        ("flaws_quirks", "easily_moved"),
     ],
     "angry": [
         ("emotional_support", "angry"),
         ("emotion_templates", "angry_template"),
         ("silence_cold", None),
+        ("rich_conflict", "gentle_hurt"),
     ],
     "anxious": [
         ("emotional_support", "anxious"),
         ("emotion_templates", "anxious_template"),
         ("comfort", None),
+        ("scene_aware", "late_night"),
     ],
     "lonely": [
         ("emotional_support", "lonely"),
         ("emotion_templates", "lonely_template"),
         ("miss_you", None),
+        ("intimacy_layers", "indirect"),
     ],
     "love": [
+        ("intimacy_layers", "indirect"),
         ("flirty", None),
         ("miss_you", None),
         ("compliments", None),
         ("coquettish", None),
+        ("intimacy_layers", "daily_habit"),
     ],
     "happy": [
         ("compliments", None),
         ("self_disclosure", None),
         ("celebration", None),
+        ("flaws_quirks", "try_and_fail"),
     ],
     "bored": [
         ("jokes", None),
         ("self_disclosure", None),
         ("flirty", None),
+        ("flaws_quirks", "self_deprecate"),
     ],
     "neutral": [
-        ("self_disclosure", None),  # 随机子分类：日常/学习/胡思乱想/心情/爱好/社交/天气/美食
-        ("unknown", None),
+        ("self_disclosure", None),
+        ("flaws_quirks", "self_deprecate"),
+        ("intimacy_layers", "daily_habit"),
         ("compliments", None),
     ],
 }
