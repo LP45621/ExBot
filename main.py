@@ -291,6 +291,10 @@ async def handle_message(request: Request):
                                 reply = get_fallback_reply(detect_emotion(ai_content),
                                                            detect_intent(ai_content), ai_content,
                                                            user_id=user_id)
+                            except Exception as e:
+                                logger.error(f"[{request_id}] AI reply error: {type(e).__name__}: {e}")
+                                reply = get_fallback_reply(detect_emotion(ai_content),
+                                                           detect_intent(ai_content), ai_content)
                             logger.info(f"[{request_id}] AI reply: {reply[:30]}")
         elif msg_type == "image":
             pic_url = root.findtext("PicUrl", "")
