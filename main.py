@@ -213,7 +213,7 @@ async def handle_message(request: Request):
                     logger.info(f"[{request_id}] User {user_id[:8]}...: {content[:30]}")
                     try:
                         reply = await get_ai_reply(user_id, ai_content, request_id,
-                                                   deadline=4.7)
+                                                   deadline=4.9)
                         _stats["total_messages"] += 1
                     except asyncio.TimeoutError:
                         # 超时 → 用语料库兜底回复（立即返回），后台继续生成存记忆

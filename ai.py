@@ -53,8 +53,8 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": messages,
-        "temperature": 0.85,
-        "max_tokens": 128
+        "temperature": 0.7,
+        "max_tokens": 64
     }
 
     for attempt in range(1):
@@ -171,7 +171,7 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
 
     # 保存回复（确保不为空，使用语料库智能兜底）
     if not reply or not reply.strip():
-        reply = get_fallback_reply(emotion, intent, user_message)
+        reply = get_fallback_reply(emotion, intent, user_message, user_id=user_id)
     save_message(user_id, "assistant", reply)
     update_memory_from_conversation(user_id, user_message, reply)
     extract_memory_from_conversation(user_id, user_message, reply)
