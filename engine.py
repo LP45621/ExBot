@@ -111,8 +111,8 @@ def route_model(user_message: str, emotion: str, context_len: int) -> str:
     return "cheap"
 
 
-def build_persona(user_memory: dict, emotion: str) -> str:
-    """构建动态人设"""
+def build_persona(user_memory: dict, emotion: str, user_msg: str = "") -> str:
+    """构建动态人设（按当前话题召回相关记忆）"""
     now = datetime.now()
     hour = now.hour
 
@@ -134,7 +134,8 @@ def build_persona(user_memory: dict, emotion: str) -> str:
     first_met = user_memory.get("first_met", time.time())
     days_known = max(1, int((time.time() - first_met) / 86400))
 
-    memories = get_memory_system().recall(user_memory.get("user_id", ""), "", top_k=3)
+    # 用当前话题匹配相关记忆（而非随机取）
+    memories = get_memory_system().recall(user_memory.get("user_id", ""), user_msg, top_k=3)
     key_memories = "；".join([m["content"] for m in memories]) if memories else "暂无"
 
     ai_mood = _mood_engine.to_prompt()
@@ -156,11 +157,18 @@ def build_persona(user_memory: dict, emotion: str) -> str:
     )
 
 
-def build_messages(user_message: str, history: list, user_memory: dict, emotion: str) -> list:
+def build_messages(user_message: str, history: list, user_memory: dict, emotion: str,
+                   user_id: str = "") -> list:
     """构建API消息列表"""
     messages = []
 
-    persona = build_persona(user_memory, emotion)
+    persona = build_persona(user_memory, emotion, user_message)
+    # 注入用户性格偏好
+    if user_id:
+        from ai import get_user_persona_prompt
+        persona_extra = get_user_persona_prompt(user_id)
+        if persona_extra:
+            persona += "\n" + persona_extra
     messages.append({"role": "system", "content": persona})
 
     if history:

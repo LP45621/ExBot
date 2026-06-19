@@ -27,6 +27,61 @@ from engine import (
 )
 from reply_fallback import get_fallback_reply, get_api_fallback
 
+# 性格指令关键词（用户发指令实时调整语气）
+PERSONA_COMMANDS = {
+    "更温柔": ("温柔", 0.2), "更暖": ("温柔", 0.2),
+    "活泼": ("活泼", 0.2), "调皮": ("活泼", 0.2), "有趣": ("活泼", 0.15),
+    "傲娇": ("傲娇", 0.25), "高冷": ("傲娇", 0.2), "毒舌": ("傲娇", 0.3),
+    "粘人": ("主动", 0.2), "主动": ("主动", 0.15),
+    "话多": ("话量", 0.2), "话少": ("话量", -0.2), "少说": ("话量", -0.2),
+    "撒娇": ("撒娇", 0.2),
+    "怼我": ("吐槽", 0.2), "毒舌": ("吐槽", 0.3),
+    "成熟": ("成熟", 0.2), "姐姐": ("成熟", 0.2),
+    "正常": ("重置", 0), "恢复": ("重置", 0), "默认": ("重置", 0),
+}
+# 用户性格参数缓存
+_user_persona = {}  # user_id → {温柔:0.5, 活泼:0.3, ...}
+
+def get_user_persona_prompt(user_id: str) -> str:
+    """获取用户当前的性格参数→自然语言提示"""
+    params = _user_persona.get(user_id, {})
+    if not params:
+        return ""
+    parts = []
+    desc = {
+        "温柔": ("更温柔一点", "可以偶尔怼人"),
+        "活泼": ("活泼调皮一点", "正经一点"),
+        "傲娇": ("带点傲娇，口是心非", "直球一点"),
+        "主动": ("主动找话题、主动关心", "被动回应就好"),
+        "话量": ("多说几句", "精简一点"),
+        "撒娇": ("多撒娇", "少撒娇"),
+        "吐槽": ("可以吐槽怼人", "温柔说话"),
+        "成熟": ("成熟姐姐风", "可爱少女风"),
+    }
+    for k, v in params.items():
+        if abs(v) < 0.1:
+            continue
+        d = desc.get(k, ("", ""))
+        text = d[0] if v > 0 else d[1]
+        parts.append(text)
+    return "性格偏好：" + "，".join(parts) if parts else ""
+
+
+def apply_persona_command(user_id: str, user_msg: str) -> str:
+    """检测并应用用户性格指令，返回确认消息"""
+    msg_lower = user_msg.lower()
+    for keyword, (dim, delta) in PERSONA_COMMANDS.items():
+        if keyword in msg_lower:
+            if user_id not in _user_persona:
+                _user_persona[user_id] = {}
+            if dim == "重置":
+                _user_persona[user_id] = {}
+                return "好，我变回自己啦"
+            old = _user_persona[user_id].get(dim, 0)
+            _user_persona[user_id][dim] = max(-1, min(1, old + delta))
+            return f"知道啦～我会{keyword}一点的"
+    return ""
+
 USE_MOCK = not DEEPSEEK_API_KEY or DEEPSEEK_API_KEY.startswith("your_")
 
 
@@ -129,6 +184,12 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
 
     user_message = user_message.strip()[:500]
 
+    # 检测性格指令
+    persona_cmd_reply = apply_persona_command(user_id, user_message)
+    if persona_cmd_reply:
+        save_message(user_id, "assistant", persona_cmd_reply)
+        return persona_cmd_reply
+
     # 保存消息（仅首次）
     if not skip_save_user:
         save_message(user_id, "user", user_message)
@@ -159,7 +220,7 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
     history = get_history(user_id, limit=MAX_HISTORY)
     user_memory = load_user_memory(user_id)
     user_memory["user_id"] = user_id
-    messages = build_messages(user_message, history, user_memory, emotion)
+    messages = build_messages(user_message, history, user_memory, emotion, user_id=user_id)
 
     # 调用 API
     if deadline > 0:
