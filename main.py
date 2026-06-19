@@ -299,6 +299,11 @@ async def handle_message(request: Request):
         else:
             reply = "收到啦～但我只看得懂文字消息哦～"
 
+        # 长回复自动拆成短句（微信通道用换行模拟多条）
+        parts = split_reply(reply)
+        if parts and len(parts) > 1:
+            reply = "\n\n".join(parts)
+
         return PlainTextResponse(_build_xml(user_id, to_user, reply),
                                  media_type="application/xml")
 

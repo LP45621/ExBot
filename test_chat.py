@@ -56,14 +56,24 @@ async function send() {
         const data = await resp.json();
         document.getElementById('typing').style.display = 'none';
         
-        // 拆分多句，逐条发送，模拟真人打字间隔
-        const lines = data.reply.split('\n').filter(l => l.trim());
-        for (let i = 0; i < lines.length; i++) {
-            append('bot', lines[i].trim());
+        // reply 现在是数组，逐条发送模拟真人打字
+        const parts = Array.isArray(data.reply) ? data.reply : [data.reply];
+        for (let i = 0; i < parts.length; i++) {
+            // 打字中闪烁
+            const dots = document.getElementById('typing');
+            dots.style.display = 'block';
+            dots.textContent = '正在输入' + '.'.repeat(i % 3 + 1);
+            
+            // 模拟打字延迟
+            await new Promise(r => setTimeout(r, 500 + Math.random() * 1000));
+            
+            dots.style.display = 'none';
+            append('bot', parts[i].trim());
             document.getElementById('mood').textContent = '心情: ' + data.mood;
-            // 模拟打字延迟: 1-2秒之间
-            if (i < lines.length - 1) {
-                await new Promise(r => setTimeout(r, 800 + Math.random() * 1200));
+            
+            // 消息间停顿
+            if (i < parts.length - 1) {
+                await new Promise(r => setTimeout(r, 800 + Math.random() * 1500));
             }
         }
     } catch (e) {
@@ -110,18 +120,24 @@ def register_test_routes(app):
     @app.post("/api/chat")
     async def api_chat(request: Request):
         from ai import get_ai_reply
+        from engine import split_reply
         body = await request.json()
         msg = body.get("message", "").strip()
         if not msg:
-            return {"reply": "你怎么不说话呀～", "mood": _mood_engine.get_mood_emoji()}
+            return {"reply": ["你怎么不说话呀～"], "mood": _mood_engine.get_mood_emoji()}
 
         try:
             reply = await get_ai_reply("local_test", msg, deadline=15.0)
         except Exception as e:
             reply = f"出错了: {e}"
 
+        # 拆成多条短消息
+        parts = split_reply(reply)
+        if not parts or len(parts) == 1:
+            parts = [reply] if reply else ["嗯"]
+
         return {
-            "reply": reply,
+            "reply": parts,  # 数组！
             "mood": _mood_engine.get_mood_emoji(),
             "mood_value": round(_mood_engine.mood, 2)
         }

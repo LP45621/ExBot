@@ -191,10 +191,11 @@ def build_messages(user_message: str, history: list, user_memory: dict, emotion:
 
 
 def split_reply(text: str) -> list:
-    """拆分回复为多条消息"""
+    """拆分回复为多条短消息（标点切割 + 长度兜底）"""
     if not text:
         return []
 
+    # 1. 标点切割
     sentences = re.split(r'(?<=[。！？~…])\s*', text.strip())
     result = []
     for s in sentences:
@@ -202,7 +203,45 @@ def split_reply(text: str) -> list:
         if s and len(s) > 1:
             result.append(s)
 
-    return result if result else [text]
+    # 2. 如果标点没切开（AI不用标点），按长度切
+    if not result or len(result) == 1:
+        combined = text.strip()
+        if len(combined) <= 15:
+            return [combined] if combined else []
+        # 按语义断点切：空格处、常见连接词前
+        chunks = _chunk_by_semantic(combined)
+        return chunks if chunks else [combined]
+
+    return result
+
+
+def _chunk_by_semantic(text: str) -> list:
+    """把长文本按语义断点切成短句，每条≤15字"""
+    # 先按空格切
+    words = text.split()
+    chunks = []
+    current = ""
+    for w in words:
+        test = current + (" " if current else "") + w
+        if len(test) > 15 and current:
+            chunks.append(current.strip())
+            current = w
+        else:
+            current = test
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks if len(chunks) > 1 else _chunk_by_fixed(text)
+
+
+def _chunk_by_fixed(text: str, size: int = 12) -> list:
+    """固定长度硬切"""
+    chunks = []
+    i = 0
+    while i < len(text):
+        end = min(i + size, len(text))
+        chunks.append(text[i:end].strip())
+        i = end
+    return chunks if len(chunks) > 1 else [text]
 
 
 def extract_memory_from_conversation(user_id: str, user_msg: str, ai_reply: str):
