@@ -27,6 +27,18 @@ from engine import (
 )
 from reply_fallback import get_fallback_reply, get_api_fallback
 
+
+def _first_sentence(text: str) -> str:
+    """只取第一句，截断多句合并"""
+    if not text:
+        return text
+    # 按句号、问号、感叹号、换行截断
+    for sep in ['。', '！', '？', '!', '?', '\n']:
+        idx = text.find(sep)
+        if idx > 0:
+            return text[:idx]
+    return text
+
 # 性格指令关键词（用户发指令实时调整语气）
 PERSONA_COMMANDS = {
     "更温柔": ("温柔", 0.2), "更暖": ("温柔", 0.2),
@@ -112,7 +124,7 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
         "model": DEEPSEEK_MODEL,
         "messages": messages,
         "temperature": 0.85,
-        "max_tokens": 30
+        "max_tokens": 20
     }
 
     for attempt in range(1):
@@ -124,7 +136,7 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
                 if "choices" in data and data["choices"]:
                     content = data["choices"][0]["message"]["content"]
                     if content and content.strip():
-                        return content
+                        return _first_sentence(content)
                     logger.warning(f"MiMo returned empty content, using fallback")
                 return get_api_fallback()
         except httpx.TimeoutException:
@@ -233,7 +245,8 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
         # 后台补发模式：无超时，耐心等
         reply = await call_deepseek(messages, request_id)
 
-    # 保存回复（确保不为空，使用语料库智能兜底）
+    # 保存回复（只取第一句）
+    reply = _first_sentence(reply)
     if not reply or not reply.strip():
         reply = get_fallback_reply(emotion, intent, user_message, user_id=user_id)
     save_message(user_id, "assistant", reply)
