@@ -9,8 +9,22 @@ from typing import List, Dict, Optional
 
 class HumanLikeMemory:
     """
-    记忆 = 重要性 × 时间衰减 × 检索相关性
-    模拟人脑：重要的事记得久，琐事会淡忘
+    人类化记忆系统 —— 模拟人脑记忆的四个核心特性
+
+    1. 重要性加权 (importance ∈ [1,10]):
+       重要的事记得久，琐事会淡忘
+
+    2. Ebbinghaus 遗忘曲线:
+       score = query_sim×0.4 + (importance/10)×0.3 + decay×0.2 + reinforce×0.1
+       decay = exp(-age_days / half_life)
+       half_life = importance × 5  (高重要性 → 长半衰期)
+
+    3. 间隔重复效应 (Spaced Repetition):
+       reinforce = ln(recall_count + 1) × 0.15
+       每次被回忆都会强化记忆权重
+
+    4. 话题相关性匹配:
+       sim = 0.9 (精确匹配) / 0.5 (分词匹配) / 0.3 (无关)
     """
 
     def __init__(self, db_path: str):

@@ -87,6 +87,23 @@ def build_personality_layer(persona_params: dict) -> str:
 
 # ============================================================
 # 节奏控制器 —— 模拟真人聊天节奏：长短不固定、时间不固定
+#
+# 算法核心: 五维加权动态调节
+#   D1 会话阶段: warming/engaged/deep/winding → base_len区间
+#   D2 用户情绪: sad→更长托底 / angry→先短后长 / happy→活泼
+#   D3 用户投入度: 消息长度滑动均值 → 冷淡检测
+#   D4 时间感知: 深夜→安静 / 清晨→温暖
+#   D5 随机扰动: Gaussian(μ=1.0, σ=0.15) → 乘性噪声 ±30%
+#
+# 回复长度分布:
+#   warming:  U(5,15)    engaged:  U(6,18)
+#   deep:     U(8,22)    winding:  U(4,12)
+#   cold:     U(2,6)     sad≥2:    U(12,25)
+#
+# 特殊触发概率:
+#   P(极简2-5字) = 0.15   (¬cold ∧ ¬sad ∧ ¬angry)
+#   P(长回复20-30字) = 0.08  (phase=deep)
+#   P(追问) = 0.40(deep) / 0.20(engaged) / 0.30(sad≥2)
 # ============================================================
 import random
 import math
