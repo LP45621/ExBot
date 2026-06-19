@@ -179,10 +179,15 @@ async def handle_message(request: Request):
             return PlainTextResponse(_build_xml(user_id, to_user, reply),
                                      media_type="application/xml")
 
-        # 正在后台生成中，返回空串让微信继续重试
+        # 正在后台生成中，用语料库兜底回复而非空串
         if msg_id and msg_id in _processing_ids:
-            logger.info(f"[{request_id}] ⏳ Still generating {msg_id[:8]}..., wait retry")
-            return PlainTextResponse("")
+            logger.info(f"[{request_id}] Still generating {msg_id[:8]}..., using fallback")
+            content = root.findtext("Content", "").strip()
+            fallback = get_fallback_reply(detect_emotion(content),
+                                          detect_intent(content), content,
+                                          user_id=user_id)
+            return PlainTextResponse(_build_xml(user_id, to_user, fallback),
+                                     media_type="application/xml")
         # ────────────────────────────────────────────────────
 
         if not check_rate_limit(user_id):
@@ -202,10 +207,12 @@ async def handle_message(request: Request):
                     _stats["total_crisis"] += 1
                     logger.warning(f"[{request_id}] Safety alert: {reason}")
                 else:
+                    ai_content = content
+                    # ------------------------------------------------
+
                     logger.info(f"[{request_id}] User {user_id[:8]}...: {content[:30]}")
                     try:
-                        # 首次：4.0s 硬超时，适配微信 5s 回调窗口
-                        reply = await get_ai_reply(user_id, content, request_id,
+                        reply = await get_ai_reply(user_id, ai_content, request_id,
                                                    deadline=4.7)
                         _stats["total_messages"] += 1
                     except asyncio.TimeoutError:
@@ -214,10 +221,11 @@ async def handle_message(request: Request):
                         if msg_id:
                             _processing_ids.add(msg_id)
                         asyncio.create_task(
-                            _bg_generate_reply(msg_id, user_id, content, request_id)
+                            _bg_generate_reply(msg_id, user_id, ai_content, request_id)
                         )
-                        reply = get_fallback_reply(detect_emotion(content),
-                                                   detect_intent(content), content)
+                        reply = get_fallback_reply(detect_emotion(ai_content),
+                                                   detect_intent(ai_content), ai_content,
+                                                   user_id=user_id)
                     logger.info(f"[{request_id}] AI reply: {reply[:30]}")
         elif msg_type == "image":
             reply = "图片收到啦～但我暂时只看得懂文字，你可以用文字告诉我你想说什么嘛～"
