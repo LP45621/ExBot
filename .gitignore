@@ -15,3 +15,16 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# 隧道工具二进制
+natapp.exe
+natapp_windows_amd64.zip
+natapp.zip
+d/
+
+# 用户测试数据
+user_memories/*.json
+
+# 附件缓存
+.reasonix/attachments/
+reasonix.toml

@@ -22,6 +22,7 @@ from engine import (
     route_model, build_messages, _mood_engine, _emotion_detector,
     extract_memory_from_conversation, get_memory_system
 )
+from reply_fallback import get_fallback_reply, get_api_fallback
 
 USE_MOCK = not DEEPSEEK_API_KEY or DEEPSEEK_API_KEY.startswith("your_")
 
@@ -43,10 +44,7 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
                 reply = get("emotional_responses", emotion)
                 if reply:
                     return reply
-        return random.choice([
-            "嗯嗯～你说的对", "然后呢～", "我明白了～",
-            "真的吗～", "哈哈～", "你说得有道理呢"
-        ])
+        return get_api_fallback()
 
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -56,30 +54,46 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
         "model": DEEPSEEK_MODEL,
         "messages": messages,
         "temperature": 0.85,
-        "max_tokens": 256
+        "max_tokens": 128
     }
 
-    for attempt in range(3):
+    for attempt in range(1):
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=8) as client:
                 resp = await client.post(DEEPSEEK_API_URL, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
                 if "choices" in data and data["choices"]:
-                    return data["choices"][0]["message"]["content"]
-                return "我好像有点累了～休息一下"
+                    content = data["choices"][0]["message"]["content"]
+                    if content and content.strip():
+                        return content
+                    logger.warning(f"MiMo returned empty content, using fallback")
+                return get_api_fallback()
         except httpx.TimeoutException:
             if attempt < 2:
                 await asyncio.sleep(1 * (attempt + 1))
                 continue
-            return random.choice(["让我缓一下，刚刚走神啦~", "网有点卡，再说一遍嘛？"])
+            return _smart_fallback(messages)
         except Exception:
             if attempt < 2:
                 await asyncio.sleep(1 * (attempt + 1))
                 continue
-            return random.choice(["网络不太好呢～稍后再聊", "哎呀断线了，你再说一次"])
+            return _smart_fallback(messages)
 
-    return "我好像有点累了～休息一下"
+    return _smart_fallback(messages)
+
+
+def _smart_fallback(messages: list) -> str:
+    """从语料库选场景化回复，替代硬编码兜底"""
+    # 提取最后一条用户消息
+    last_user_msg = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            last_user_msg = m.get("content", "")
+            break
+    emotion = detect_emotion(last_user_msg)
+    intent = detect_intent(last_user_msg)
+    return get_fallback_reply(emotion, intent, last_user_msg)
 
 
 async def auto_summarize(user_id: str):
@@ -98,15 +112,23 @@ async def auto_summarize(user_id: str):
         pass
 
 
-async def get_ai_reply(user_id: str, user_message: str, request_id: str = "") -> str:
-    """获取 AI 回复（主入口）"""
+async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
+                      deadline: float = 0.0, skip_save_user: bool = False) -> str:
+    """获取 AI 回复（主入口）
+
+    Args:
+        deadline: API 硬超时（秒）。0 = 无超时。用于被动回复模式适配微信 5s 限制。
+                  超时时抛出 asyncio.TimeoutError，由上层利用微信重试机制交付缓存结果。
+        skip_save_user: 后台补发生成时跳过用户消息存储（首次调用已存）
+    """
     if not user_message or not user_message.strip():
         return "你怎么不说话呀～"
 
     user_message = user_message.strip()[:500]
 
-    # 保存消息
-    save_message(user_id, "user", user_message)
+    # 保存消息（仅首次）
+    if not skip_save_user:
+        save_message(user_id, "user", user_message)
 
     # 检测情绪
     emotion = detect_emotion(user_message)
@@ -117,17 +139,18 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "") ->
 
     # 判断是否需要调用LLM
     if not should_use_llm(user_message, emotion):
-        simple_reply = get_simple_reply(intent)
+        simple_reply = get_simple_reply(intent, user_message)
         if simple_reply:
             save_message(user_id, "assistant", simple_reply)
             update_memory_from_conversation(user_id, user_message, simple_reply)
             extract_memory_from_conversation(user_id, user_message, simple_reply)
             return simple_reply
 
-    # 后台摘要
-    msg_count = get_message_count(user_id)
-    if msg_count > 0 and msg_count % SUMMARY_THRESHOLD == 0:
-        asyncio.create_task(auto_summarize(user_id))
+    # 后台摘要（仅首次触发）
+    if not skip_save_user:
+        msg_count = get_message_count(user_id)
+        if msg_count > 0 and msg_count % SUMMARY_THRESHOLD == 0:
+            asyncio.create_task(auto_summarize(user_id))
 
     # 构建消息（带压缩）
     history = get_history(user_id, limit=MAX_HISTORY)
@@ -136,9 +159,19 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "") ->
     messages = build_messages(user_message, history, user_memory, emotion)
 
     # 调用 API
-    reply = await call_deepseek(messages, request_id)
+    if deadline > 0:
+        # 被动回复模式：严格超时，让微信重试兜底
+        reply = await asyncio.wait_for(
+            call_deepseek(messages, request_id),
+            timeout=deadline
+        )
+    else:
+        # 后台补发模式：无超时，耐心等
+        reply = await call_deepseek(messages, request_id)
 
-    # 保存回复
+    # 保存回复（确保不为空，使用语料库智能兜底）
+    if not reply or not reply.strip():
+        reply = get_fallback_reply(emotion, intent, user_message)
     save_message(user_id, "assistant", reply)
     update_memory_from_conversation(user_id, user_message, reply)
     extract_memory_from_conversation(user_id, user_message, reply)

@@ -55,10 +55,31 @@ def detect_intent(text: str) -> str:
     return None
 
 
-def get_simple_reply(intent: str) -> str:
+# intent 到 SIMPLE_REPLIES 键的映射（修复键名不匹配导致模板回复全部失效的 bug）
+INTENT_TO_TEMPLATE_KEY = {
+    "morning": "早",
+    "goodbye": "晚安",
+    "hello": "在吗",
+    "thank_you": "谢谢",
+}
+
+
+def get_simple_reply(intent: str, raw_msg: str = "") -> str:
     """获取简单回复（不调用LLM）"""
+    # 优先：intent 直接匹配 SIMPLE_REPLIES
     if intent in SIMPLE_REPLIES:
         return random.choice(SIMPLE_REPLIES[intent])
+
+    # 其次：通过映射表转换 intent → template key
+    template_key = INTENT_TO_TEMPLATE_KEY.get(intent)
+    if template_key and template_key in SIMPLE_REPLIES:
+        return random.choice(SIMPLE_REPLIES[template_key])
+
+    # 兜底：用原始消息直接匹配 SIMPLE_REPLIES 的键
+    for keyword, replies in SIMPLE_REPLIES.items():
+        if keyword in raw_msg:
+            return random.choice(replies)
+
     return None
 
 

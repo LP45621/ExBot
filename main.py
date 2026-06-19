@@ -12,8 +12,9 @@ from fastapi.responses import PlainTextResponse
 
 from config import WECHAT_TOKEN, PORT
 from ai import get_ai_reply
-from engine import split_reply
+from engine import split_reply, detect_emotion, detect_intent
 from safety import filter_input, get_safety_response, check_crisis
+from reply_fallback import get_fallback_reply
 
 # 日志配置
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -27,9 +28,10 @@ _last_cleanup = time.time()
 MAX_MSG_LENGTH = 500
 MAX_BODY_SIZE = 10240
 
-# 消息去重缓存
-_dedup_cache = {}
-_dedup_last_clean = time.time()
+# 回复缓存（利用微信重试机制：超时时后台生成，重试时交付）
+_reply_cache = {}         # msg_id → reply_text
+_processing_ids = set()   # 正在后台生成的 msg_id
+_cache_last_clean = time.time()
 
 # 服务统计
 _stats = {
@@ -75,19 +77,40 @@ def check_rate_limit(user_id: str) -> bool:
     return True
 
 
+def _build_xml(to_user: str, from_user: str, content: str) -> str:
+    """构建微信被动回复 XML"""
+    ts = str(int(time.time()))
+    return f"""<xml>
+<ToUserName><![CDATA[{to_user}]]></ToUserName>
+<FromUserName><![CDATA[{from_user}]]></FromUserName>
+<CreateTime>{ts}</CreateTime>
+<MsgType><![CDATA[text]]></MsgType>
+<Content><![CDATA[{content}]]></Content>
+</xml>"""
+
+
+async def _bg_generate_reply(msg_id: str, user_id: str, content: str, request_id: str):
+    """后台生成回复并写入缓存，同时通过客服消息主动推送给用户"""
+    global _reply_cache, _processing_ids
+    try:
+        reply = await get_ai_reply(user_id, content, request_id,
+                                   deadline=0.0, skip_save_user=True)
+        _reply_cache[msg_id] = reply
+        logger.info(f"[{request_id}] Background reply ready for retry: {reply[:30]}...")
+
+        # 主动推送：万一微信重试已经放弃，走客服消息兜底
+        from wechat_api import send_custom_reply
+        asyncio.create_task(send_custom_reply(user_id, msg_id, reply))
+
+    except Exception as e:
+        logger.error(f"[{request_id}] Background reply failed: {e}")
+        _reply_cache[msg_id] = "刚才卡了一下，你再说一遍嘛～"
+    finally:
+        _processing_ids.discard(msg_id)
+
+
 def check_duplicate(body: bytes) -> bool:
-    """检查消息是否重复"""
-    global _dedup_last_clean
-    now = time.time()
-
-    if now - _dedup_last_clean > 300:
-        _dedup_cache.clear()
-        _dedup_last_clean = now
-
-    msg_hash = hashlib.md5(body).hexdigest()
-    if msg_hash in _dedup_cache:
-        return True
-    _dedup_cache[msg_hash] = now
+    """保留旧接口兼容性（已不再使用 body hash 去重，改由 _reply_cache / _processing_ids 管理）"""
     return False
 
 
@@ -114,27 +137,53 @@ async def verify(request: Request):
 
 @app.post("/wechat")
 async def handle_message(request: Request):
-    """处理微信消息"""
+    """处理微信消息（被动回复 + 重试缓存）"""
+    global _cache_last_clean, _reply_cache, _processing_ids
+
     cleanup_rate_limit()
     _stats["total_requests"] += 1
     request_id = uuid.uuid4().hex[:8]
+
+    # 定期清理过期缓存（超过 120s 未取走的）
+    now = time.time()
+    if now - _cache_last_clean > 120:
+        expiry = now - 90
+        expired_ids = [mid for mid, ts in list(_reply_cache.items())
+                       if isinstance(ts, float) and ts < expiry]
+        for mid in expired_ids:
+            _reply_cache.pop(mid, None)
+        # 清理孤立 processing
+        _processing_ids = {mid for mid in _processing_ids
+                           if mid not in _reply_cache}
+        _cache_last_clean = now
 
     try:
         body = await request.body()
         if len(body) > MAX_BODY_SIZE:
             return PlainTextResponse("success")
 
-        if check_duplicate(body):
-            logger.info(f"[{request_id}] Duplicate message, skip")
-            return PlainTextResponse("success")
-
         root = ET.fromstring(body)
+        msg_id = root.findtext("MsgId", "")
         msg_type = root.findtext("MsgType", "")
         user_id = root.findtext("FromUserName", "")
         to_user = root.findtext("ToUserName", "")
 
         if not user_id or not to_user:
             return PlainTextResponse("success")
+
+        # ── 重试缓存：微信重试时，优先返回已生成好的回复 ──
+        if msg_id and msg_id in _reply_cache:
+            reply = _reply_cache.pop(msg_id)
+            _processing_ids.discard(msg_id)
+            logger.info(f"[{request_id}] 🎯 Retry hit! Serving cached reply for {msg_id[:8]}...")
+            return PlainTextResponse(_build_xml(user_id, to_user, reply),
+                                     media_type="application/xml")
+
+        # 正在后台生成中，返回空串让微信继续重试
+        if msg_id and msg_id in _processing_ids:
+            logger.info(f"[{request_id}] ⏳ Still generating {msg_id[:8]}..., wait retry")
+            return PlainTextResponse("")
+        # ────────────────────────────────────────────────────
 
         if not check_rate_limit(user_id):
             return PlainTextResponse("success")
@@ -146,7 +195,7 @@ async def handle_message(request: Request):
             elif len(content) > MAX_MSG_LENGTH:
                 reply = "消息太长啦～缩短一点告诉我嘛～"
             else:
-                # 内容安全检查
+                # 内容安全检查（同步，瞬间完成）
                 is_unsafe, safety_type, reason = filter_input(content)
                 if is_unsafe:
                     reply = get_safety_response(safety_type)
@@ -154,9 +203,22 @@ async def handle_message(request: Request):
                     logger.warning(f"[{request_id}] Safety alert: {reason}")
                 else:
                     logger.info(f"[{request_id}] User {user_id[:8]}...: {content[:30]}")
-                    reply = await get_ai_reply(user_id, content, request_id)
+                    try:
+                        # 首次：4.0s 硬超时，适配微信 5s 回调窗口
+                        reply = await get_ai_reply(user_id, content, request_id,
+                                                   deadline=4.7)
+                        _stats["total_messages"] += 1
+                    except asyncio.TimeoutError:
+                        # 超时 → 用语料库兜底回复（立即返回），后台继续生成存记忆
+                        logger.info(f"[{request_id}] Timeout, using corpus fallback...")
+                        if msg_id:
+                            _processing_ids.add(msg_id)
+                        asyncio.create_task(
+                            _bg_generate_reply(msg_id, user_id, content, request_id)
+                        )
+                        reply = get_fallback_reply(detect_emotion(content),
+                                                   detect_intent(content), content)
                     logger.info(f"[{request_id}] AI reply: {reply[:30]}")
-                    _stats["total_messages"] += 1
         elif msg_type == "image":
             reply = "图片收到啦～但我暂时只看得懂文字，你可以用文字告诉我你想说什么嘛～"
         elif msg_type == "voice":
@@ -166,16 +228,8 @@ async def handle_message(request: Request):
         else:
             reply = "收到啦～但我只看得懂文字消息哦～"
 
-        timestamp = str(int(time.time()))
-        xml_response = f"""<xml>
-<ToUserName><![CDATA[{user_id}]]></ToUserName>
-<FromUserName><![CDATA[{to_user}]]></FromUserName>
-<CreateTime>{timestamp}</CreateTime>
-<MsgType><![CDATA[text]]></MsgType>
-<Content><![CDATA[{reply}]]></Content>
-</xml>"""
-
-        return PlainTextResponse(xml_response, media_type="application/xml")
+        return PlainTextResponse(_build_xml(user_id, to_user, reply),
+                                 media_type="application/xml")
 
     except ET.ParseError as e:
         logger.error(f"[{request_id}] XML parse error: {e}")
@@ -239,7 +293,7 @@ async def debug():
         },
         "stats": _stats,
         "rate_limit_users": len(_rate_limit),
-        "dedup_cache_size": len(_dedup_cache)
+        "reply_cache_size": len(_reply_cache)
     }
 
 
@@ -252,6 +306,9 @@ async def startup():
         logger.info("Initializing scripts database...")
         from script_db import init_db
         init_db()
+    # 注册本地测试界面（浏览器直接聊，不走微信）
+    from test_chat import register_test_routes
+    register_test_routes(app)
     logger.info("Server ready!")
 
 
