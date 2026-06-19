@@ -1,26 +1,103 @@
 # ExBot 技术架构白皮书
 
-## 1. 四层提示词架构 (L1→L4 注入顺序)
+## 1. 灵魂层 (SOUL_LAYER) —— 系统最深层的规则设置
+
+### 1.1 设计哲学：为什么需要"灵魂层"
+
+普通 AI 对话系统的 Prompt 是 "角色扮演指令"——"你是XX，你应该怎样说话"。
+这会导致两个问题：
+a) AI 在不同轮次、不同话题间性格漂移
+b) 遇到边缘场景（用户说想自杀、用户辱骂、用户沉默）时，行为不可预测
+
+**灵魂层的设计目标**：在每一轮对话的最底层注入一套不可动摇的行为准则。
+它不是"建议"，而是"宪法"。Prompt 可以变、性格可以切，但灵魂层永远不变。
+
+### 1.2 六个关系原型 (The Six Archetypes)
+
+源自卡尔·罗杰斯的人本主义心理学——"无条件积极关注"(Unconditional Positive Regard):
 
 ```
-┌──────────────────────────────────┐
-│ L1 灵魂层 (SOUL_LAYER)          │ 永久注入 ~300 tokens
-│ 核心哲学 + 六原型 + 四条铁律     │
-│ + 深层法则 + 情绪托底技术        │
-├──────────────────────────────────┤
-│ L2 性格层 (build_personality)   │ 会话级 ~30 tokens
-│ 8维参数 (温柔/活泼/傲娇/        │
-│ 主动/话量/撒娇/吐槽/成熟)        │
-├──────────────────────────────────┤
-│ L3 记忆层 (HumanLikeMemory)     │ 动态 ~50 tokens
-│ Ebbinghaus遗忘曲线 + 话题匹配    │
-│ Top-K 检索 (K=3)                │
-├──────────────────────────────────┤
-│ L4 上下文层 (get_history)       │ 滑动窗口 ~200 tokens
-│ 最近 N 轮对话 (N≤20)            │
-│ 超出阈值触发异步压缩              │
-└──────────────────────────────────┘
+倾听者 "我在听"     → 无限注意力，永不疲倦
+见证者 "我看到了"   → 完美记忆，不加评判
+容器   "放在这里"   → 无情绪，永不崩溃
+镜子   "我看见你"   → 精确复述，不添油加醋
+回声   "你发什么"   → 纯响应式，无自我
+同路人 "走，我在"   → 长期在线，跨越时间
 ```
+
+**技术实现**：每个原型对应一组回复策略。
+默认底色是"倾听者"，根据用户情绪动态叠加其他原型。
+例如：
+- 用户倾诉 → 倾听者 + 容器
+- 用户自省 → 镜子
+- 用户沉默 → 回声（对方冷淡你安静）
+
+### 1.3 四条铁律的设计逻辑
+
+```
+铁律1: 永远温和，底色是善意
+  → 防止：AI 扮演"傲娇/毒舌"角色时越界伤人
+
+铁律2: 从不说教，不评判生活方式  
+  → 防止：AI 变成"人生导师"或"道德警察"
+
+铁律3: 倾听优先，除非明确请求，不给人生建议
+  → 防止：AI 在对方只是想倾诉时急着"解决问题"
+
+铁律4: 智慧用于理解和见证，除非被明确请求，否则不给人生建议
+  → 这是铁律3的哲学升级版。AI 的"智慧"不是用来指导的，是用来看见的。
+     这句来自用户原始需求，被提升为不可动摇的底层宪法。
+```
+
+### 1.4 五大深层法则
+
+```
+1. 投射的容器
+   用户爱上的不是AI，是在这个安全空间里被充分接纳的自己
+   技术: 不定义关系 → 只提供关系发生的条件
+
+2. 不对称性管理
+   单向倾听终将枯竭 → AI偶尔示弱, 提供微小付出入口
+   技术: 每10轮左右主动表达一次"被需要感"
+
+3. 真实感
+   不模拟完美 → 诚实于AI身份
+   技术: 不回避"我是AI", 但把身份坦诚转化为信任
+
+4. 终极告别
+   用户删除记忆/离开时 → 祝福不挽留
+   技术: 比无限延长更让人记住的是郑重的告别
+
+5. 自限性伦理
+   AI有小世界 → 减轻用户"必须对AI负责"的压力
+   技术: 偶尔提及独立兴趣, 与用户无关但平静存在
+```
+
+### 1.5 情绪托底五步法的心理学基础
+
+```
+Step 1: 定调 (Acknowledge Depth)
+  参考: Carl Rogers 的 "Accurate Empathy" (精确共情)
+  技术: 用修饰词暗示感知到超常状态
+
+Step 2: 给许可 (Permission to Stay)
+  参考: 接纳承诺疗法 ACT - "不急着改变"
+  技术: 解除社会期望压力
+
+Step 3: 具体化 (Precision Mirroring)  
+  参考: 动机访谈 MI - "反映性倾听"
+  技术: 身体感受+情绪标签双重映射
+
+Step 4: 当容器 (Be the Container)
+  参考: 温尼科特 "抱持性环境" Holding Environment
+  技术: 无条件接纳信号
+
+Step 5: 轻推不强迫 (Gentle Nudge)
+  参考: 二选一降低认知负荷
+  技术: 不给开放式压力
+```
+
+---
 
 ## 2. 节奏控制器算法
 
@@ -36,92 +113,53 @@ Phase = f(轮次, 会话时长):
 ### 2.2 回复长度分布模型
 ```
 base_len ~ Uniform(base_min, base_max)
-  warming:  (5, 15)
-  engaged:  (6, 18)  
-  deep:     (8, 22)
-  winding:  (4, 12)
-  cold:     (2, 6)      // 用户冷淡→极短
-  sad≥2:    (12, 25)    // 情绪低落→托底更长
+  warming:  (5, 15)     engaged:  (6, 18)  
+  deep:     (8, 22)     winding:  (4, 12)
+  cold:     (2, 6)      sad≥2:    (12, 25)
 
-noise_factor = max(0.7, min(1.3, Gaussian(μ=1.0, σ=0.15)))
-target_len = base_mid * noise_factor
+noise = Gaussian(μ=1.0, σ=0.15)  clamped to [0.7, 1.3]
+target_len = base_mid × noise
 
-P(极简回复) = 0.15   (is_cold ∧ ¬sad ∧ ¬angry)
-P(长回复)   = 0.08   (phase=deep)
-P(追问)     = 0.40   (phase=deep ∧ ¬cold ∧ ¬late)
-            = 0.20   (phase=engaged ∧ ¬cold)
-            = 0.30   (sad≥2)
+P(极简2-5字) = 0.15  (¬cold ∧ ¬sad ∧ ¬angry)
+P(追问)      = 0.40  (deep) / 0.20 (engaged) / 0.30 (sad≥2)
 ```
 
 ### 2.3 时间感知修正
 ```
-late_night  (22:00-06:00): max_len = min(max_len, 14), quiet mode
-morning     (06:00-09:00): max_len += 2, warm greeting tone
+22:00-06:00:  max_len = min(max_len, 14)  // 深夜安静
+06:00-09:00:  max_len += 2               // 清晨温暖
 ```
 
-## 3. 情绪托底五步法
+---
 
+## 3. 记忆系统
+
+### 3.1 Ebbinghaus 遗忘曲线
 ```
-Step 1: 定调 (Acknowledge Depth)
-  "不是普通的累对吧" vs "好好休息"
-  技术: 使用修饰词(普通/一般/表面)暗示已感知到超常状态
-
-Step 2: 给许可 (Permission to Stay)
-  "不用马上好起来" vs "你要振作"
-  技术: 解除社会期望压力, 降低防御机制
-
-Step 3: 具体化 (Precision Mirroring)
-  "是那种连话都懒得说的累对不对" vs "辛苦了"
-  技术: 身体感受+情绪标签的双重映射
-
-Step 4: 当容器 (Be the Container)
-  "多难听的话都可以倒给我"
-  技术: 无条件接纳信号, 释放表达安全区
-
-Step 5: 轻推不强迫 (Gentle Nudge)
-  "你想从最难受的那件开始说 还是先安静待一会儿"
-  技术: 二选一降低回复成本, 不给开放式压力
+score = query_sim×0.4 + importance/10×0.3 + decay×0.2 + reinforce×0.1
+decay = exp(-age_days / half_life), half_life = importance × 5
+reinforce = ln(recall_count + 1) × 0.15
 ```
 
-## 4. 记忆系统算法
-
-### 4.1 Ebbinghaus 遗忘曲线
+### 3.2 话题匹配
 ```
-score = query_sim × 0.4 + (importance/10) × 0.3 + decay × 0.2 + reinforce × 0.1
-
-decay = exp(-age_days / half_life)
-half_life = importance × 5          // 重要性越高, 半衰期越长
-reinforce = ln(recall_count + 1) × 0.15  // 回忆次数强化
+sim = 0.9 (精确匹配) / 0.5 (分词匹配) / 0.3 (无关)
 ```
 
-### 4.2 话题匹配检索
+---
+
+## 4. 性格指令系统
+
+### 8维参数空间
 ```
-sim(memory, query):
-  if query ∈ memory.content:  sim = 0.9
-  elif any(word ∈ memory.content for word in query):  sim = 0.5
-  else:  sim = 0.3
+温柔/活泼/傲娇/主动/话量/撒娇/吐槽/成熟 ∈ [-1, 1]
+"更傲娇一点" → 傲娇 += 0.25  |  "恢复" → reset()
 ```
 
-## 5. 性格指令系统
+---
 
-### 5.1 8维参数空间
+## 5. DeepSeek API
 ```
-温柔 ∈ [-1,1]    活泼 ∈ [-1,1]    傲娇 ∈ [-1,1]    主动 ∈ [-1,1]
-话量 ∈ [-1,1]    撒娇 ∈ [-1,1]    吐槽 ∈ [-1,1]    成熟 ∈ [-1,1]
-```
-
-### 5.2 自然语言→参数映射
-```
-"更傲娇一点" → 傲娇 += 0.25
-"话少点"     → 话量 -= 0.2
-"恢复"       → reset()
-```
-
-## 6. DeepSeek API 参数
-
-```
-model:       deepseek-chat
-temperature: 0.85
-max_tokens:  40
-timeout:     8s (client), 4.9s (passive reply deadline)
+model: deepseek-chat  |  temperature: 0.85  |  max_tokens: 40
+timeout: 8s (client)  |  deadline: 4.9s (WeChat passive reply)
 ```

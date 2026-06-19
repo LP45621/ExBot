@@ -263,9 +263,7 @@ async def handle_message(request: Request):
 async def health():
     """健康检查"""
     import sqlite3
-    import os
     from config import DB_PATH as CHAT_DB
-    from script_db import DB_PATH as SCRIPT_DB
 
     db_ok = False
     conn = None
@@ -279,13 +277,11 @@ async def health():
         if conn:
             conn.close()
 
-    scripts_ok = os.path.exists(SCRIPT_DB)
     uptime = time.time() - _stats["start_time"]
 
     return {
         "status": "ok" if db_ok else "degraded",
         "db": db_ok,
-        "scripts": scripts_ok,
         "uptime": round(uptime, 1),
         "stats": _stats,
         "time": time.time()
@@ -318,12 +314,6 @@ async def debug():
 @app.on_event("startup")
 async def startup():
     logger.info("Starting WeChat AI Companion Server...")
-    from script_db import DB_PATH as SCRIPT_DB
-    import os
-    if not os.path.exists(SCRIPT_DB):
-        logger.info("Initializing scripts database...")
-        from script_db import init_db
-        init_db()
     # 注册本地测试界面（浏览器直接聊，不走微信）
     from test_chat import register_test_routes
     register_test_routes(app)

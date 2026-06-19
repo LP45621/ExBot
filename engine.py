@@ -30,15 +30,6 @@ def get_memory_system():
     return _memory_system
 
 
-def get_script_db():
-    global _script_db
-    if _script_db is None:
-        try:
-            from script_db import get_random
-            _script_db = get_random
-        except Exception:
-            _script_db = lambda *a, **k: None
-    return _script_db
 
 
 def detect_emotion(text: str) -> str:
