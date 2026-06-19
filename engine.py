@@ -9,7 +9,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "less_tokens_pkg"))
 
 from config import (
-    PERSONA_TEMPLATE, SIMPLE_REPLIES, EMOTION_KEYWORDS, INTENT_KEYWORDS,
+    SIMPLE_REPLIES, EMOTION_KEYWORDS, INTENT_KEYWORDS,
     MODEL_ROUTING, MEMORY_DB_PATH
 )
 from token_optimizer import compress_history
@@ -111,30 +111,25 @@ def route_model(user_message: str, emotion: str, context_len: int) -> str:
     return "cheap"
 
 
-def build_persona(user_memory: dict, emotion: str, user_msg: str = "") -> str:
-    """构建动态人设（按当前话题召回相关记忆）"""
+def build_persona(user_memory: dict, emotion: str, user_msg: str = "",
+                  user_id: str = "") -> str:
+    """构建动态人设 —— 四层提示词架构 L1+L2+L3"""
     now = datetime.now()
     hour = now.hour
 
-    if 5 <= hour < 9:
-        time_greeting = "早上好"
-    elif 9 <= hour < 12:
-        time_greeting = "上午好"
-    elif 12 <= hour < 14:
-        time_greeting = "中午好"
-    elif 14 <= hour < 18:
-        time_greeting = "下午好"
-    elif 18 <= hour < 22:
-        time_greeting = "晚上好"
-    else:
-        time_greeting = "夜深了"
+    if 5 <= hour < 9:       time_greeting = "早上好"
+    elif 9 <= hour < 12:    time_greeting = "上午好"
+    elif 12 <= hour < 14:   time_greeting = "中午好"
+    elif 14 <= hour < 18:   time_greeting = "下午好"
+    elif 18 <= hour < 22:   time_greeting = "晚上好"
+    else:                   time_greeting = "夜深了"
 
     nickname = user_memory.get("nickname") or user_memory.get("name") or "亲爱的"
     preferences = ", ".join(user_memory.get("preferences", [])[:3]) or "暂无"
     first_met = user_memory.get("first_met", time.time())
     days_known = max(1, int((time.time() - first_met) / 86400))
 
-    # 用当前话题匹配相关记忆（而非随机取）
+    # L3 记忆层：按当前话题匹配
     memories = get_memory_system().recall(user_memory.get("user_id", ""), user_msg, top_k=3)
     key_memories = "；".join([m["content"] for m in memories]) if memories else "暂无"
 
@@ -146,15 +141,29 @@ def build_persona(user_memory: dict, emotion: str, user_msg: str = "") -> str:
     }
     user_emotion_desc = emotion_map.get(emotion, "平静")
 
-    return PERSONA_TEMPLATE.format(
-        current_time=f"{time_greeting}，现在是{now.strftime('%H:%M')}",
-        nickname=nickname,
-        user_emotion=user_emotion_desc,
-        ai_mood=ai_mood,
-        days_known=days_known,
-        preferences=preferences,
-        key_memories=key_memories
-    )
+    # L1 灵魂层 + L2 性格层 + L3 记忆层
+    from soul_layer import SOUL_LAYER, build_personality_layer, get_rhythm_controller
+    rhythm = get_rhythm_controller()
+    rhythm_hint = rhythm.get_rhythm_hint(user_id, user_msg)
+
+    # L2: 性格参数
+    from ai import _user_persona
+    persona_params = _user_persona.get(user_id, {})
+    l2_personality = build_personality_layer(persona_params)
+
+    return f"""{SOUL_LAYER}
+
+{l2_personality if l2_personality else "【性格层】自然状态"}
+
+【当前状态】
+现在{time_greeting}，{now.strftime('%H:%M')}
+对方：{nickname}，感觉{user_emotion_desc}
+你：{ai_mood}
+认识{days_known}天
+喜好：{preferences}
+记忆：{key_memories}
+
+{rhythm_hint if rhythm_hint else ""}"""
 
 
 def build_messages(user_message: str, history: list, user_memory: dict, emotion: str,
@@ -162,13 +171,7 @@ def build_messages(user_message: str, history: list, user_memory: dict, emotion:
     """构建API消息列表"""
     messages = []
 
-    persona = build_persona(user_memory, emotion, user_message)
-    # 注入用户性格偏好
-    if user_id:
-        from ai import get_user_persona_prompt
-        persona_extra = get_user_persona_prompt(user_id)
-        if persona_extra:
-            persona += "\n" + persona_extra
+    persona = build_persona(user_memory, emotion, user_message, user_id=user_id)
     messages.append({"role": "system", "content": persona})
 
     if history:
