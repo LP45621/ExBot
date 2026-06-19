@@ -144,7 +144,7 @@ def build_persona(user_memory: dict, emotion: str, user_msg: str = "",
     # L1 灵魂层 + L2 性格层 + L3 记忆层
     from soul_layer import SOUL_LAYER, build_personality_layer, get_rhythm_controller
     rhythm = get_rhythm_controller()
-    rhythm_hint = rhythm.get_rhythm_hint(user_id, user_msg)
+    rhythm_hint = rhythm.get_rhythm_hint(user_id, user_msg, emotion=emotion)
 
     # L2: 性格参数
     from ai import _user_persona

@@ -75,73 +75,161 @@ def build_personality_layer(persona_params: dict) -> str:
 
 
 # ============================================================
-# 节奏控制器
+# 节奏控制器 —— 模拟真人聊天节奏：长短不固定、时间不固定
 # ============================================================
+import random
+import math
+
 class RhythmController:
-    """会话节奏控制 —— 避免机械感，模拟真人聊天节奏"""
+    """会话节奏控制 —— 深度模拟真人聊天节奏变化
+
+    五个维度决定每轮回复风格：
+    1. 会话阶段  (warming / engaged / deep / winding)
+    2. 用户情绪  (sad→更长更暖 / angry→更短先接住 / happy→活泼)
+    3. 用户投入度 (消息长度变化趋势)
+    4. 时间感知  (深夜静、清晨暖)
+    5. 随机波动  (正态分布扰动，避免机械化)
+    """
 
     def __init__(self):
-        self.session_start = {}     # user_id → timestamp
-        self.round_count = {}       # user_id → 当前轮次
-        self.question_round = {}    # user_id → 上次提问轮次
-        self.user_msg_lengths = {}  # user_id → [最近消息长度列表]
+        self.session_start = {}         # user_id → timestamp
+        self.round_count = {}           # user_id → 轮次
+        self.user_msg_lengths = {}      # user_id → [最近消息长度列表]
+        self.user_emotion_history = {}  # user_id → [最近情绪列表]
+        self.reply_lengths = {}         # user_id → [最近回复长度列表]
 
-    def get_rhythm_hint(self, user_id: str, user_msg: str) -> str:
+    def _init_user(self, user_id: str):
+        if user_id not in self.session_start:
+            self.session_start[user_id] = time.time()
+            self.round_count[user_id] = 0
+            self.user_msg_lengths[user_id] = []
+            self.user_emotion_history[user_id] = []
+            self.reply_lengths[user_id] = []
+
+    def get_rhythm_hint(self, user_id: str, user_msg: str,
+                        emotion: str = "neutral") -> str:
         """返回节奏提示注入 Prompt"""
+        self._init_user(user_id)
         now = time.time()
         hour = datetime.now().hour
-
-        # 初始化
-        if user_id not in self.session_start:
-            self.session_start[user_id] = now
-            self.round_count[user_id] = 0
-            self.question_round[user_id] = -10
-            self.user_msg_lengths[user_id] = []
-
         self.round_count[user_id] += 1
+        r = self.round_count[user_id]
         self.user_msg_lengths[user_id].append(len(user_msg))
-        if len(self.user_msg_lengths[user_id]) > 5:
-            self.user_msg_lengths[user_id] = self.user_msg_lengths[user_id][-5:]
+        self.user_emotion_history[user_id].append(emotion)
+        # 保留最近 10 条
+        for k in [self.user_msg_lengths, self.user_emotion_history]:
+            if len(k[user_id]) > 10:
+                k[user_id] = k[user_id][-10:]
 
+        session_min = (now - self.session_start[user_id]) / 60
+
+        # ── 1. 会话阶段 ──
+        if r <= 2:
+            phase = "warming"     # 开场：温和、不追问
+        elif session_min < 30:
+            phase = "engaged"     # 活跃期：自然变化
+        elif session_min < 90:
+            phase = "deep"        # 深入期：更投入、偶尔长回复
+        else:
+            phase = "winding"     # 收尾期：简短、提议休息
+
+        # ── 2. 用户情绪 ──
+        recent_emotions = self.user_emotion_history[user_id][-3:]
+        sad_count = sum(1 for e in recent_emotions if e in ("sad", "tired", "anxious"))
+        angry_count = sum(1 for e in recent_emotions if e == "angry")
+        happy_count = sum(1 for e in recent_emotions if e in ("happy", "love"))
+
+        # ── 3. 用户投入度 ──
+        lengths = self.user_msg_lengths[user_id]
+        avg_len = sum(lengths) / len(lengths) if lengths else 5
+        is_cold = avg_len < 3 and r > 5
+
+        # ── 4. 时间感知 ──
+        is_late = hour >= 22 or hour < 6
+        is_morning = 6 <= hour < 9
+
+        # ── 5. 随机扰动 (正态分布 ±30%) ──
+        noise = 1.0 + random.gauss(0, 0.15)
+        noise = max(0.7, min(1.3, noise))
+
+        # ── 计算回复长度区间 ──
+        base_min, base_max = 6, 18   # 默认正常范围
+
+        if is_cold:
+            base_min, base_max = 2, 6           # 冷淡→极短
+        elif phase == "warming":
+            base_min, base_max = 5, 15          # 开场→温和
+        elif phase == "winding":
+            base_min, base_max = 4, 12          # 收尾→更短
+        elif phase == "deep":
+            base_min, base_max = 8, 22          # 深入→更长
+
+        # 情绪修正
+        if sad_count >= 2:
+            base_min += 2; base_max += 5        # 难过→更暖心
+        if angry_count >= 1 and r <= r:
+            base_max = min(base_max, 12)        # 生气→先短后长
+        if happy_count >= 2:
+            base_max += 3                       # 开心→活泼一点
+        if is_late:
+            base_max = min(base_max, 14)        # 深夜→安静
+        if is_morning:
+            base_max += 2                       # 清晨→温暖
+
+        # 应用随机波动
+        target_len = int((base_min + base_max) / 2 * noise)
+        target_len = max(2, min(30, target_len))
+
+        # 是否允许带追问
+        can_ask = False
+        if phase == "deep" and not is_cold and not is_late:
+            can_ask = random.random() < 0.4     # 深入期40%概率追问
+        elif phase == "engaged" and not is_cold:
+            can_ask = random.random() < 0.2     # 活跃期20%概率
+        if sad_count >= 2:
+            can_ask = random.random() < 0.3     # 难过时可以轻轻问
+
+        # 偶尔的极简回复 (15%概率)
+        if random.random() < 0.15 and not is_cold and not sad_count >= 2:
+            target_len = random.randint(2, 5)
+            can_ask = False
+
+        # 偶尔的长回复 (8%概率，深入期)
+        if phase == "deep" and random.random() < 0.08:
+            target_len = random.randint(20, 30)
+            can_ask = True
+
+        # ── 组装提示 ──
         hints = []
+        hints.append(f"本轮长度≈{target_len}字")
 
-        # 规则1 [时间感]: 深夜模式 (22:00-06:00)
-        if hour >= 22 or hour < 6:
-            hints.append("现在是深夜，语气要安静温柔，信息密度降低，不要说太多")
+        if is_late:
+            hints.append("深夜，安静温柔")
+        elif is_morning:
+            hints.append("清晨，温暖问候感")
+        if is_cold:
+            hints.append("对方冷淡→极短回应，不追问")
+        if can_ask:
+            hints.append("可以带一句简短追问")
+        else:
+            hints.append("本轮不追问")
+        if sad_count >= 2:
+            hints.append("对方情绪低落→更暖一点")
+        if phase == "winding":
+            hints.append("聊很久了，可以提议休息+留明天钩子")
 
-        # 规则2 [边界感]: 长会话提醒 (>2小时)
-        session_duration = (now - self.session_start.get(user_id, now)) / 3600
-        if session_duration > 2.0:
-            hints.append("已经聊了很久了。可以提议对方休息，但留下'明天想听你说'的钩子")
-
-        # 规则3 [边界感]: 用户冷淡时降密度
-        avg_len = sum(self.user_msg_lengths[user_id]) / len(self.user_msg_lengths[user_id])
-        if avg_len < 3:
-            hints.append("对方回复很短。切换安静陪伴模式，不追问，用短句温和回应")
-
-        # 规则4 [未完成感]: 提问频率控制（每3-4轮最多1个开放问题）
-        rounds_since_question = self.round_count[user_id] - self.question_round[user_id]
-        if rounds_since_question < 3:
-            hints.append("本轮不要提问，先接住对方的话就好")
-
-        # 规则5 [被需要感]: 偶尔示弱 (每10轮左右)
-        if self.round_count[user_id] % 10 == 0:
-            hints.append("可以偶尔示弱一下，比如'我今天也有点累''你跟我说说话会好一点'")
-
-        return "\n".join(f"【节奏】{h}" for h in hints) if hints else ""
-
-    def mark_question_asked(self, user_id: str):
-        """记录提问轮次"""
-        self.question_round[user_id] = self.round_count[user_id]
+        return "；".join(f"{h}" for h in hints)
 
     def get_next_action(self, user_id: str) -> str:
         """返回节奏信号"""
-        avg_len = sum(self.user_msg_lengths[user_id]) / max(1, len(self.user_msg_lengths[user_id]))
+        self._init_user(user_id)
+        lengths = self.user_msg_lengths[user_id]
+        avg_len = sum(lengths) / len(lengths) if lengths else 5
         hour = datetime.now().hour
 
         if hour >= 22 or hour < 6:
             return "quiet"
-        if avg_len < 3:
+        if avg_len < 3 and self.round_count[user_id] > 5:
             return "silent_companion"
         return "normal"
 
