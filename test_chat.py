@@ -55,8 +55,17 @@ async function send() {
         });
         const data = await resp.json();
         document.getElementById('typing').style.display = 'none';
-        append('bot', data.reply);
-        document.getElementById('mood').textContent = '心情: ' + data.mood;
+        
+        // 拆分多句，逐条发送，模拟真人打字间隔
+        const lines = data.reply.split('\n').filter(l => l.trim());
+        for (let i = 0; i < lines.length; i++) {
+            append('bot', lines[i].trim());
+            document.getElementById('mood').textContent = '心情: ' + data.mood;
+            // 模拟打字延迟: 1-2秒之间
+            if (i < lines.length - 1) {
+                await new Promise(r => setTimeout(r, 800 + Math.random() * 1200));
+            }
+        }
     } catch (e) {
         document.getElementById('typing').style.display = 'none';
         append('bot', '出错了: ' + e.message);
