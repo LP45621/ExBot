@@ -4,6 +4,9 @@ import os
 import httpx
 import random
 import asyncio
+import logging
+
+logger = logging.getLogger("wechat")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "less_tokens_pkg"))
 
@@ -177,3 +180,50 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
     extract_memory_from_conversation(user_id, user_message, reply)
 
     return reply
+
+
+async def get_ai_image_reply(user_id: str, pic_url: str, text: str = "",
+                             request_id: str = "") -> str:
+    """处理图片消息 —— 用上下文生成自然拟人回复"""
+    # 取最近的对话历史，结合图片消息生成自然回应
+    history = get_history(user_id, limit=5)
+
+    prompt = "朋友给你发了张图片。用1-2句话自然回他，不要说自己看不懂图片。可以猜一下是什么、或者调侃一下、或者回个表情包式的反应。"
+
+    messages = [{"role": "system", "content": prompt}]
+    for role, content in history[-4:]:
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": "[发了张图片]"})
+
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": messages,
+        "temperature": 0.8,
+        "max_tokens": 60
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.post(DEEPSEEK_API_URL, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            if "choices" in data and data["choices"]:
+                content = data["choices"][0]["message"]["content"]
+                if content and content.strip():
+                    save_message(user_id, "assistant", content)
+                    return content
+    except Exception as e:
+        logger.error(f"[{request_id}] Image reply error: {e}")
+
+    # 兜底
+    return random.choice([
+        "哈哈哈这是啥",
+        "笑死，你哪来的图",
+        "这图好搞笑",
+        "哇，你发的这是啥",
+        "有意思，再来一张",
+    ])

@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
 from config import WECHAT_TOKEN, PORT
-from ai import get_ai_reply
+from ai import get_ai_reply, get_ai_image_reply
 from engine import split_reply, detect_emotion, detect_intent
 from safety import filter_input, get_safety_response, check_crisis
 from reply_fallback import get_fallback_reply
@@ -228,7 +228,17 @@ async def handle_message(request: Request):
                                                    user_id=user_id)
                     logger.info(f"[{request_id}] AI reply: {reply[:30]}")
         elif msg_type == "image":
-            reply = "图片收到啦～但我暂时只看得懂文字，你可以用文字告诉我你想说什么嘛～"
+            pic_url = root.findtext("PicUrl", "")
+            text_content = root.findtext("Content", "").strip()
+            if pic_url:
+                logger.info(f"[{request_id}] Image from {user_id[:8]}...: {pic_url[:60]}")
+                try:
+                    reply = await get_ai_image_reply(user_id, pic_url, text_content, request_id)
+                except Exception as e:
+                    logger.error(f"[{request_id}] Image process failed: {e}")
+                    reply = "图片收到啦～但我暂时看不懂，你可以用文字告诉我这是什么嘛～"
+            else:
+                reply = "图片收到啦～但我暂时看不懂，你可以用文字告诉我这是什么嘛～"
         elif msg_type == "voice":
             reply = "语音收到啦～但我暂时听不懂，你可以打字告诉我嘛～"
         elif msg_type == "video":
