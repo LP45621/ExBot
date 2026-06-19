@@ -16,6 +16,50 @@ from engine import split_reply, detect_emotion, detect_intent
 from safety import filter_input, get_safety_response, check_crisis
 from reply_fallback import get_fallback_reply
 
+# 缺席检测：48小时未对话 → 温暖归回钩子
+_absence_check = {}  # user_id → 上次检测时间
+
+async def _absence_hook(user_id: str, request_id: str) -> str:
+    """用户久别归来时的暖场消息"""
+    from memory import get_history
+    import time as _time
+    now = _time.time()
+    # 避免同一会话重复触发
+    last_check = _absence_check.get(user_id, 0)
+    if now - last_check < 3600:
+        return ""
+    _absence_check[user_id] = now
+
+    history = get_history(user_id, limit=5)
+    if not history or len(history) < 2:
+        return ""
+
+    last_ts = 0
+    for role, content in reversed(history):
+        if role == "assistant":
+            break
+    # 从 chat.db 取最后一条消息时间
+    import sqlite3
+    from config import DB_PATH
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute(
+            "SELECT MAX(time) FROM chat WHERE user_id=?", (user_id,)
+        ).fetchone()
+        conn.close()
+        last_ts = row[0] if row and row[0] else 0
+    except Exception:
+        return ""
+
+    hours_away = (now - last_ts) / 3600 if last_ts else 0
+    if hours_away < 48:
+        return ""
+
+    days = int(hours_away / 24)
+    logger.info(f"[{request_id}] Absence hook: {user_id[:8]}... gone {days} days")
+    return f"你回来了 都{days}天没见了 我一直在 不用说什么 回来就好"
+
+
 # 日志配置
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("wechat")
@@ -207,26 +251,29 @@ async def handle_message(request: Request):
                     _stats["total_crisis"] += 1
                     logger.warning(f"[{request_id}] Safety alert: {reason}")
                 else:
-                    ai_content = content
-                    # ------------------------------------------------
-
-                    logger.info(f"[{request_id}] User {user_id[:8]}...: {content[:30]}")
-                    try:
-                        reply = await get_ai_reply(user_id, ai_content, request_id,
-                                                   deadline=4.9)
-                        _stats["total_messages"] += 1
-                    except asyncio.TimeoutError:
-                        # 超时 → 用语料库兜底回复（立即返回），后台继续生成存记忆
-                        logger.info(f"[{request_id}] Timeout, using corpus fallback...")
-                        if msg_id:
-                            _processing_ids.add(msg_id)
-                        asyncio.create_task(
-                            _bg_generate_reply(msg_id, user_id, ai_content, request_id)
-                        )
-                        reply = get_fallback_reply(detect_emotion(ai_content),
-                                                   detect_intent(ai_content), ai_content,
-                                                   user_id=user_id)
-                    logger.info(f"[{request_id}] AI reply: {reply[:30]}")
+                    # 缺席钩子：久别归来先给暖场消息
+                    absence_msg = await _absence_hook(user_id, request_id)
+                    if absence_msg:
+                        reply = absence_msg
+                        logger.info(f"[{request_id}] AI reply (absence): {absence_msg[:30]}")
+                    else:
+                        ai_content = content
+                        logger.info(f"[{request_id}] User {user_id[:8]}...: {content[:30]}")
+                        try:
+                            reply = await get_ai_reply(user_id, ai_content, request_id,
+                                                       deadline=4.9)
+                            _stats["total_messages"] += 1
+                        except asyncio.TimeoutError:
+                            logger.info(f"[{request_id}] Timeout, using corpus fallback...")
+                            if msg_id:
+                                _processing_ids.add(msg_id)
+                            asyncio.create_task(
+                                _bg_generate_reply(msg_id, user_id, ai_content, request_id)
+                            )
+                            reply = get_fallback_reply(detect_emotion(ai_content),
+                                                       detect_intent(ai_content), ai_content,
+                                                       user_id=user_id)
+                        logger.info(f"[{request_id}] AI reply: {reply[:30]}")
         elif msg_type == "image":
             pic_url = root.findtext("PicUrl", "")
             text_content = root.findtext("Content", "").strip()
