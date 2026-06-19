@@ -127,7 +127,7 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
         "model": DEEPSEEK_MODEL,
         "messages": messages,
         "temperature": 0.85,
-        "max_tokens": 50
+        "max_tokens": 60
     }
 
     for attempt in range(1):
@@ -139,7 +139,7 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
                 if "choices" in data and data["choices"]:
                     content = data["choices"][0]["message"]["content"]
                     if content and content.strip():
-                        return _first_sentence(content)
+                        return content
                     logger.warning(f"MiMo returned empty content, using fallback")
                 return get_api_fallback()
         except httpx.TimeoutException:
@@ -248,8 +248,7 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
         # 后台补发模式：无超时，耐心等
         reply = await call_deepseek(messages, request_id)
 
-    # 保存回复（只取核心句）
-    reply = _first_sentence(reply)
+    # 保存回复
     if not reply or not reply.strip():
         reply = get_fallback_reply(emotion, intent, user_message, user_id=user_id)
     save_message(user_id, "assistant", reply)
