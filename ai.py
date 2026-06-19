@@ -137,10 +137,11 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
                 resp.raise_for_status()
                 data = resp.json()
                 if "choices" in data and data["choices"]:
-                    content = data["choices"][0]["message"]["content"]
+                    msg = data["choices"][0].get("message", {})
+                    content = msg.get("content") or msg.get("reasoning_content") or ""
                     if content and content.strip():
                         return content
-                    logger.warning(f"MiMo returned empty content, using fallback")
+                    logger.warning("MiMo returned empty content, using fallback")
                 return get_api_fallback()
         except httpx.TimeoutException:
             if attempt < 2:

@@ -123,10 +123,13 @@ def check_rate_limit(user_id: str) -> bool:
 
 def _build_xml(to_user: str, from_user: str, content: str) -> str:
     """构建微信被动回复 XML，硬过滤动作描述"""
-    # 硬过滤：删除所有括号动作描述
+    # 硬过滤：删除所有括号内容（含不成对括号）
     import re as _re
-    content = _re.sub(r'[（(][^）)]*[）)]', '', content)  # 中文括号+英文括号
+    content = _re.sub(r'[（(][^）)]*[）)]', '', content)  # 成对括号
+    content = _re.sub(r'[（(][^）)]*$', '', content)       # 尾部不成对开括号
+    content = _re.sub(r'^[^（(]*[）)]', '', content)       # 头部不成对闭括号
     content = _re.sub(r'[\[【][^\]】]*[\]】]', '', content)  # 方括号
+    content = _re.sub(r'[\[【][^\]】]*$', '', content)       # 不成对方括号
     content = content.strip()
     if not content:
         content = "嗯"

@@ -34,8 +34,8 @@ WECHAT_APPSECRET = "5a44b842f3e599f3b292bae27aa4bcba"
 
 # API 配置 (通过环境变量 DEEPSEEK_API_KEY/URL/MODEL 切换)
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-DEEPSEEK_API_URL = os.environ.get("DEEPSEEK_API_URL", "https://token-plan-cn.xiaomimimo.com/v1/chat/completions")
-DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "mimo-v2.5-pro")
+DEEPSEEK_API_URL = os.environ.get("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 # AI 角色设定 - 深度优化版
 # AI 角色设定 —— 已迁移至 soul_layer.py (四层提示词架构 L1-L4)
