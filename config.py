@@ -32,10 +32,10 @@ WECHAT_TOKEN = "mimotesttalk01a"
 WECHAT_APPID = "wx3c2f3919db956f39"
 WECHAT_APPSECRET = "5a44b842f3e599f3b292bae27aa4bcba"
 
-# MiMo API
-DEEPSEEK_API_KEY = os.environ.get("MIMO_API_KEY", "tp-cj0f7ak40b2aq5bdnd0awm0bxf8v4c3n2busmhmhxqnb1rff")
-DEEPSEEK_API_URL = os.environ.get("MIMO_API_URL", "https://token-plan-cn.xiaomimimo.com/v1/chat/completions")
-DEEPSEEK_MODEL = os.environ.get("MIMO_MODEL", "mimo-v2.5-pro")
+# DeepSeek API (key 通过环境变量 DEEPSEEK_API_KEY 传入)
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_URL = os.environ.get("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 # AI 角色设定 - 深度优化版
 PERSONA_TEMPLATE = """你是小萌，20岁女大学生，学设计。温柔有小脾气，会撒娇。说话口语化、短句、偶尔带语气词。
