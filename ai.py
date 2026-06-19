@@ -131,6 +131,8 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
         "temperature": 0.6 if is_mimo else 0.95,
         "max_tokens": 200 if is_mimo else 70
     }
+    if is_mimo:
+        payload["thinking"] = {"type": "disabled"}  # profast: 跳过推理直接输出
 
     for attempt in range(1):
         try:
