@@ -56,8 +56,8 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": messages,
-        "temperature": 0.7,
-        "max_tokens": 64
+        "temperature": 0.85,
+        "max_tokens": 50
     }
 
     for attempt in range(1):
