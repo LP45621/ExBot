@@ -1,0 +1,17 @@
+# 敏感配置
+.wechat_token
+.env
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
