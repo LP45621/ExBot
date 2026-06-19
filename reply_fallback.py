@@ -18,21 +18,25 @@ def _load_corpus():
 
 
 def _pick(category, sub=None, default=None):
-    """从语料库中按分类随机取一条"""
+    """从语料库中按分类随机取一条，支持子分类随机选取"""
     c = _load_corpus()
     if category not in c:
         return default
     val = c[category]
-    if sub and isinstance(val, dict) and sub in val:
-        items = val[sub]
-        return random.choice(items) if items else default
+    # dict with subcategories → 随机选一个子分类
+    if isinstance(val, dict):
+        if sub and sub in val:
+            items = val[sub]
+            return random.choice(items) if items else default
+        # 随机选任意子分类
+        all_subs = [v for v in val.values() if v]
+        if all_subs:
+            chosen = random.choice(all_subs)
+            return random.choice(chosen)
+        return default
+    # flat list
     if isinstance(val, list) and val:
         return random.choice(val)
-    if isinstance(val, dict):
-        all_items = []
-        for v in val.values():
-            all_items.extend(v if isinstance(v, list) else [])
-        return random.choice(all_items) if all_items else default
     return default
 
 
@@ -80,7 +84,7 @@ EMOTION_CORPUS_MAP = {
         ("flirty", None),
     ],
     "neutral": [
-        ("self_disclosure", None),
+        ("self_disclosure", None),  # 随机子分类：日常/学习/胡思乱想/心情/爱好/社交/天气/美食
         ("unknown", None),
         ("compliments", None),
     ],
