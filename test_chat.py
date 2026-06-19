@@ -131,6 +131,12 @@ def register_test_routes(app):
         except Exception as e:
             reply = f"出错了: {e}"
 
+        # 硬过滤动作描述
+        import re as _re
+        reply = _re.sub(r'[（(][^）)]*[）)]', '', reply)
+        reply = _re.sub(r'[\[【][^\]】]*[\]】]', '', reply)
+        reply = reply.strip() or "嗯"
+
         # 拆成多条短消息
         parts = split_reply(reply)
         if not parts or len(parts) == 1:
