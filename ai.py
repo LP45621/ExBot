@@ -123,11 +123,13 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json"
     }
+    # MiMo 推理模型专用参数：压低推理空间
+    is_mimo = "mimo" in DEEPSEEK_MODEL
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": messages,
-        "temperature": 0.95,
-        "max_tokens": 70
+        "temperature": 0.6 if is_mimo else 0.95,
+        "max_tokens": 200 if is_mimo else 70
     }
 
     for attempt in range(1):
@@ -137,8 +139,7 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
                 resp.raise_for_status()
                 data = resp.json()
                 if "choices" in data and data["choices"]:
-                    msg = data["choices"][0].get("message", {})
-                    content = msg.get("content") or msg.get("reasoning_content") or ""
+                    content = data["choices"][0].get("message", {}).get("content", "")
                     if content and content.strip():
                         return content
                     logger.warning("MiMo returned empty content, using fallback")
@@ -276,11 +277,12 @@ async def get_ai_image_reply(user_id: str, pic_url: str, text: str = "",
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json"
     }
+    is_mimo = "mimo" in DEEPSEEK_MODEL
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": messages,
-        "temperature": 0.8,
-        "max_tokens": 60
+        "temperature": 0.6 if is_mimo else 0.8,
+        "max_tokens": 60 if is_mimo else 60
     }
 
     try:
@@ -289,7 +291,8 @@ async def get_ai_image_reply(user_id: str, pic_url: str, text: str = "",
             resp.raise_for_status()
             data = resp.json()
             if "choices" in data and data["choices"]:
-                content = data["choices"][0]["message"]["content"]
+                content = data["choices"][0].get("message", {}).get("content", "")
+                # MiMo 推理模型不取 reasoning_content (那是思考过程)
                 if content and content.strip():
                     save_message(user_id, "assistant", content)
                     return content
