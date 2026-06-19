@@ -215,6 +215,25 @@ async def handle_message(request: Request):
         if not user_id or not to_user:
             return PlainTextResponse("success")
 
+        # ── 多消息队列：微信重试时逐条发送拆开的回复 ──
+        if msg_id and msg_id in _msg_parts:
+            idx = _msg_parts_idx.get(msg_id, 0)
+            parts = _msg_parts[msg_id]
+            if idx < len(parts):
+                reply = parts[idx]
+                _msg_parts_idx[msg_id] = idx + 1
+                logger.info(f"[{request_id}] 📨 Multi-msg part {idx+1}/{len(parts)}: {reply[:20]}...")
+                # 最后一条发完清理
+                if idx + 1 >= len(parts):
+                    del _msg_parts[msg_id]
+                    del _msg_parts_idx[msg_id]
+                return PlainTextResponse(_build_xml(user_id, to_user, reply),
+                                         media_type="application/xml")
+            else:
+                # 已发完，清理
+                _msg_parts.pop(msg_id, None)
+                _msg_parts_idx.pop(msg_id, None)
+
         # ── 重试缓存：微信重试时，优先返回已生成好的回复 ──
         if msg_id and msg_id in _reply_cache:
             reply = _reply_cache.pop(msg_id)
@@ -299,7 +318,7 @@ async def handle_message(request: Request):
         else:
             reply = "收到啦～但我只看得懂文字消息哦～"
 
-        # 长回复自动拆成短句（微信通道用换行模拟多条）
+        # 多消息拆分（网页端逐条发送；微信通道受协议限制只能一条）
         parts = split_reply(reply)
         if parts and len(parts) > 1:
             reply = "\n\n".join(parts)
