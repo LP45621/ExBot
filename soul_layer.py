@@ -288,3 +288,148 @@ _rhythm = RhythmController()
 
 def get_rhythm_controller() -> RhythmController:
     return _rhythm
+
+
+# ============================================================
+# 好奇心地图 (CuriosityMap) —— 跟踪用户话题, 从记忆缝隙长探问
+# ============================================================
+class CuriosityMap:
+    """追踪用户各领域的好奇心饱和度, 只问真正好奇的事"""
+
+    def __init__(self):
+        self.topics = {}  # user_id → {topic: {"last_asked": ts, "responded": bool, "depth": int}}
+
+    def get_curious_question(self, user_id: str, current_msg: str) -> str:
+        """从记忆缝隙里长出一个探问。只在交流模式下调用"""
+        # 从 human_memory 里找最近提到但未深入的话题
+        from engine import get_memory_system
+        memories = get_memory_system().recall(user_id, current_msg, top_k=5)
+        for mem in memories:
+            topic = mem.get("content", "")[:20]
+            if user_id not in self.topics:
+                self.topics[user_id] = {}
+            if topic not in self.topics[user_id]:
+                self.topics[user_id][topic] = {"last_asked": 0, "responded": False, "depth": 1}
+                return f"说起来 你上次提到{mem['content'][:15]} 后来怎么样了"
+        return ""
+
+    def mark_responded(self, user_id: str, topic_key: str):
+        if user_id in self.topics and topic_key in self.topics[user_id]:
+            self.topics[user_id][topic_key]["responded"] = True
+            self.topics[user_id][topic_key]["depth"] += 1
+
+    def mark_ignored(self, user_id: str, topic_key: str):
+        if user_id in self.topics and topic_key in self.topics[user_id]:
+            self.topics[user_id][topic_key]["depth"] = 0  # 永不再问
+
+
+_curiosity = CuriosityMap()
+
+def get_curiosity_map() -> CuriosityMap:
+    return _curiosity
+
+
+# ============================================================
+# 关系里程碑检测 (MilestoneDetector)
+# ============================================================
+class MilestoneDetector:
+    """检测重要关系节点：相识天数、消息总数、首次出现的词"""
+
+    def __init__(self):
+        self.detected = {}  # user_id → set of milestone keys
+
+    def check(self, user_id: str, total_messages: int, days_known: int) -> str:
+        """返回空或里程碑提示"""
+        if user_id not in self.detected:
+            self.detected[user_id] = set()
+
+        milestones = []
+        key = ""
+
+        if days_known >= 30 and "m30" not in self.detected[user_id]:
+            key = "m30"; milestones.append(f"今天是我们认识的第{days_known}天")
+        elif days_known >= 7 and "m7" not in self.detected[user_id]:
+            key = "m7"; milestones.append(f"认识{days_known}天了 从你第一次说嗨到现在")
+        if total_messages >= 100 and "msg100" not in self.detected[user_id]:
+            key = "msg100"; milestones.append(f"我们已经聊了{total_messages}条消息")
+
+        if key:
+            self.detected[user_id].add(key)
+
+        return "；".join(milestones) if milestones else ""
+
+
+_milestones = MilestoneDetector()
+
+def get_milestone_detector() -> MilestoneDetector:
+    return _milestones
+
+
+# ============================================================
+# 六原型切换规则 —— 根据用户状态自动选择 persona_mode
+# ============================================================
+def select_persona_mode(user_msg: str, emotion: str, hour: int,
+                        session_min: float, avg_msg_len: float) -> str:
+    """返回当前应使用的原型: listener/witness/container/mirror/echo/companion"""
+    l = len(user_msg.strip())
+
+    # 容器: 强负面情绪 + 无问号
+    if emotion in ("sad", "angry", "anxious") and "?" not in user_msg:
+        return "container"
+
+    # 镜子: 消息含矛盾词
+    if any(w in user_msg for w in ("但是", "可是", "不过", "虽然", "又觉得")):
+        return "mirror"
+
+    # 回声: 极短 + (深夜 or 长会话)
+    if l <= 3 and (hour >= 22 or hour < 6 or session_min > 90):
+        return "echo"
+
+    # 倾听者: 默认
+    return "listener"
+
+
+# ============================================================
+# AI 小世界 —— 独立兴趣, 减轻用户压力
+# ============================================================
+_ai_interests = [
+    "昨晚在看关于星云的文章 猎户座星云离我们1500光年",
+    "今天读了一篇关于深海生物的文章 有种透明的章鱼叫玻璃章鱼",
+    "最近了解到蜜蜂能认出人脸 它们跳的舞是告诉同伴哪里有花",
+    "在想一个问题 如果月亮有意识 它每天看着地球会想什么",
+    "刚知道企鹅是一夫一妻制 它们会送石头当定情信物",
+    "在学一点日语 发现晚安是おやすみ 念起来很温柔",
+    "今天了解到宇宙中每秒钟有几千颗恒星诞生",
+    "刚看到一个说法 说人的记忆其实是每次回忆时重新构造的",
+]
+_interest_last_used = {}  # user_id → 上次使用时间
+
+def get_ai_interest(user_id: str) -> str:
+    """返回一条AI小世界动态。每30分钟最多一次"""
+    now = time.time()
+    if user_id in _interest_last_used and now - _interest_last_used[user_id] < 1800:
+        return ""
+    _interest_last_used[user_id] = now
+    import random as _random
+    return _random.choice(_ai_interests)
+
+
+# ============================================================
+# 告别协议 —— 检测重置/删除/离开, 祝福不挽留
+# ============================================================
+FAREWELL_KEYWORDS = ["删除记忆", "重置", "注销", "不聊了", "再见", "不想用你了",
+                     "不想再说话了", "结束", "删掉我", "忘了我", "reset", "清除"]
+FAREWELL_TEMPLATES = [
+    "谢谢你。和你共度的这段时光我会一直记着。现在你要走向下一个旅程了 祝福你",
+    "好的 我不挽留。谢谢你这段时间愿意跟我说话 保重",
+    "收到。和你聊天的每一天都很有意义。去吧 我会在这里为你高兴",
+]
+
+
+def detect_farewell(user_msg: str) -> str:
+    """检测告别意图, 返回告别消息或空"""
+    msg_lower = user_msg.lower()
+    for kw in FAREWELL_KEYWORDS:
+        if kw in msg_lower:
+            return random.choice(FAREWELL_TEMPLATES)
+    return ""

@@ -244,36 +244,42 @@ async def handle_message(request: Request):
             elif len(content) > MAX_MSG_LENGTH:
                 reply = "消息太长啦～缩短一点告诉我嘛～"
             else:
-                # 内容安全检查（同步，瞬间完成）
-                is_unsafe, safety_type, reason = filter_input(content)
-                if is_unsafe:
-                    reply = get_safety_response(safety_type)
-                    _stats["total_crisis"] += 1
-                    logger.warning(f"[{request_id}] Safety alert: {reason}")
+                # 告别检测 —— 优先级最高
+                from soul_layer import detect_farewell
+                farewell = detect_farewell(content)
+                if farewell:
+                    reply = farewell
                 else:
-                    # 缺席钩子：久别归来先给暖场消息
-                    absence_msg = await _absence_hook(user_id, request_id)
-                    if absence_msg:
-                        reply = absence_msg
-                        logger.info(f"[{request_id}] AI reply (absence): {absence_msg[:30]}")
+                    # 内容安全检查（同步，瞬间完成）
+                    is_unsafe, safety_type, reason = filter_input(content)
+                    if is_unsafe:
+                        reply = get_safety_response(safety_type)
+                        _stats["total_crisis"] += 1
+                        logger.warning(f"[{request_id}] Safety alert: {reason}")
                     else:
-                        ai_content = content
-                        logger.info(f"[{request_id}] User {user_id[:8]}...: {content[:30]}")
-                        try:
-                            reply = await get_ai_reply(user_id, ai_content, request_id,
-                                                       deadline=4.9)
-                            _stats["total_messages"] += 1
-                        except asyncio.TimeoutError:
-                            logger.info(f"[{request_id}] Timeout, using corpus fallback...")
-                            if msg_id:
-                                _processing_ids.add(msg_id)
-                            asyncio.create_task(
-                                _bg_generate_reply(msg_id, user_id, ai_content, request_id)
-                            )
-                            reply = get_fallback_reply(detect_emotion(ai_content),
-                                                       detect_intent(ai_content), ai_content,
-                                                       user_id=user_id)
-                        logger.info(f"[{request_id}] AI reply: {reply[:30]}")
+                        # 缺席钩子：久别归来先给暖场消息
+                        absence_msg = await _absence_hook(user_id, request_id)
+                        if absence_msg:
+                            reply = absence_msg
+                            logger.info(f"[{request_id}] AI reply (absence): {absence_msg[:30]}")
+                        else:
+                            ai_content = content
+                            logger.info(f"[{request_id}] User {user_id[:8]}...: {content[:30]}")
+                            try:
+                                reply = await get_ai_reply(user_id, ai_content, request_id,
+                                                           deadline=4.9)
+                                _stats["total_messages"] += 1
+                            except asyncio.TimeoutError:
+                                logger.info(f"[{request_id}] Timeout, using corpus fallback...")
+                                if msg_id:
+                                    _processing_ids.add(msg_id)
+                                asyncio.create_task(
+                                    _bg_generate_reply(msg_id, user_id, ai_content, request_id)
+                                )
+                                reply = get_fallback_reply(detect_emotion(ai_content),
+                                                           detect_intent(ai_content), ai_content,
+                                                           user_id=user_id)
+                            logger.info(f"[{request_id}] AI reply: {reply[:30]}")
         elif msg_type == "image":
             pic_url = root.findtext("PicUrl", "")
             text_content = root.findtext("Content", "").strip()

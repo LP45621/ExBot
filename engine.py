@@ -134,8 +134,21 @@ def build_persona(user_memory: dict, emotion: str, user_msg: str = "",
 
     # L1 灵魂层 + L2 性格层 + L3 记忆层
     from soul_layer import SOUL_LAYER, build_personality_layer, get_rhythm_controller
+    from soul_layer import get_milestone_detector, select_persona_mode
     rhythm = get_rhythm_controller()
     rhythm_hint = rhythm.get_rhythm_hint(user_id, user_msg, emotion=emotion)
+
+    # 关系里程碑
+    total_msgs = get_message_count(user_id) if user_id in globals() else 0
+    # 用 memory 模块估算消息数
+    from memory import get_message_count as _gmc
+    total_msgs = _gmc(user_id)
+    milestone = get_milestone_detector().check(user_id, total_msgs, days_known)
+
+    # 六原型模式
+    session_min = 0  # 由RhythmController内部跟踪
+    persona_mode = select_persona_mode(user_msg, emotion, hour, session_min,
+                                       len(user_msg))
 
     # L2: 性格参数
     from ai import _user_persona
@@ -144,15 +157,17 @@ def build_persona(user_memory: dict, emotion: str, user_msg: str = "",
 
     return f"""{SOUL_LAYER}
 
-{l2_personality if l2_personality else "【性格层】自然状态"}
+【当前模式】{persona_mode}
+{l2_personality if l2_personality else ""}
 
 【当前状态】
 现在{time_greeting}，{now.strftime('%H:%M')}
 对方：{nickname}，感觉{user_emotion_desc}
 你：{ai_mood}
-认识{days_known}天
+认识{days_known}天 共聊{total_msgs}条
 喜好：{preferences}
 记忆：{key_memories}
+{milestone if milestone else ""}
 
 {rhythm_hint if rhythm_hint else ""}"""
 
