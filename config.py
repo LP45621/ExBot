@@ -19,7 +19,7 @@ WECHAT_TOKEN = os.environ.get("WECHAT_TOKEN", "")
 if not WECHAT_TOKEN:
     _token_file = os.path.join(BASE_DIR, ".wechat_token")
     if os.path.exists(_token_file):
-        with open(_token_file, "r") as f:
+        with open(_token_file, "r", encoding="utf-8-sig") as f:
             WECHAT_TOKEN = f.read().strip()
     if not WECHAT_TOKEN:
         WECHAT_TOKEN = secrets.token_hex(16)

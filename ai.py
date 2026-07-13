@@ -19,7 +19,8 @@ from auto_memory import load_user_memory, update_memory_from_conversation, get_m
 from engine import (
     detect_emotion, detect_intent, get_simple_reply, should_use_llm,
     route_model, build_messages,
-    extract_memory_from_conversation, get_memory_system
+    extract_memory_from_conversation, get_memory_system,
+    _mood_engine
 )
 from reply_fallback import get_fallback_reply, get_api_fallback
 
