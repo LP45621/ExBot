@@ -1,4 +1,4 @@
-"""AI 模块"""
+"""AI 模块 —— DeepSeek Flash 优化版"""
 import httpx
 import random
 import asyncio
@@ -24,12 +24,16 @@ from engine import (
 )
 from reply_fallback import get_fallback_reply, get_api_fallback
 
+# Token 优化配置
+MAX_TOKENS_REPLY = 50      # 回复最大 token（Flash 模型响应快，可压缩）
+MAX_TOKENS_IMAGE = 40      # 图片回复最大 token
+MAX_TOKENS_SUMMARY = 80    # 摘要最大 token
+
 
 def _first_sentence(text: str, allow_two: bool = False) -> str:
-    """尽量保持简短。allow_two=True 时允许关键词追问（如 怎么了/然后呢/是吧/对不对）"""
+    """尽量保持简短。allow_two=True 时允许关键词追问"""
     if not text:
         return text
-    # 第一截断点
     first_cut = len(text)
     for sep in ['。', '！', '？', '!', '?']:
         idx = text.find(sep)
@@ -39,7 +43,8 @@ def _first_sentence(text: str, allow_two: bool = False) -> str:
         text = text[:first_cut]
     return text[:40] if len(text) > 40 else text
 
-# 性格指令关键词（用户发指令实时调整语气）
+
+# 性格指令关键词
 PERSONA_COMMANDS = {
     "更温柔": ("温柔", 0.2), "更暖": ("温柔", 0.2),
     "活泼": ("活泼", 0.2), "调皮": ("活泼", 0.2), "有趣": ("活泼", 0.15),
@@ -51,8 +56,9 @@ PERSONA_COMMANDS = {
     "成熟": ("成熟", 0.2), "姐姐": ("成熟", 0.2),
     "正常": ("重置", 0), "恢复": ("重置", 0), "默认": ("重置", 0),
 }
-# 用户性格参数缓存
-_user_persona = {}  # user_id → {温柔:0.5, 活泼:0.3, ...}
+
+_user_persona = {}
+
 
 def get_user_persona_prompt(user_id: str) -> str:
     """获取用户当前的性格参数→自然语言提示"""
@@ -80,7 +86,7 @@ def get_user_persona_prompt(user_id: str) -> str:
 
 
 def apply_persona_command(user_id: str, user_msg: str) -> str:
-    """检测并应用用户性格指令，返回确认消息"""
+    """检测并应用用户性格指令"""
     msg_lower = user_msg.lower()
     for keyword, (dim, delta) in PERSONA_COMMANDS.items():
         if keyword in msg_lower:
@@ -94,11 +100,13 @@ def apply_persona_command(user_id: str, user_msg: str) -> str:
             return f"知道啦～我会{keyword}一点的"
     return ""
 
+
 USE_MOCK = not DEEPSEEK_API_KEY or DEEPSEEK_API_KEY.startswith("your_")
 
 
-async def call_deepseek(messages: list, request_id: str = "") -> str:
-    """调用 API（带超时、重试）"""
+async def call_deepseek(messages: list, request_id: str = "",
+                        max_tokens: int = MAX_TOKENS_REPLY) -> str:
+    """调用 DeepSeek API（带超时、重试）"""
     if USE_MOCK:
         return get_api_fallback()
 
@@ -106,18 +114,15 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json"
     }
-    # MiMo 推理模型专用参数：压低推理空间
-    is_mimo = "mimo" in DEEPSEEK_MODEL
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": messages,
-        "temperature": 0.6 if is_mimo else 0.95,
-        "max_tokens": 200 if is_mimo else 70
+        "temperature": 0.85,
+        "max_tokens": max_tokens,
+        "top_p": 0.9
     }
-    if is_mimo:
-        payload["thinking"] = {"type": "disabled"}  # profast: 跳过推理直接输出
 
-    for attempt in range(1):
+    for attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=8) as client:
                 resp = await client.post(DEEPSEEK_API_URL, json=payload, headers=headers)
@@ -126,26 +131,30 @@ async def call_deepseek(messages: list, request_id: str = "") -> str:
                 if "choices" in data and data["choices"]:
                     content = data["choices"][0].get("message", {}).get("content", "")
                     if content and content.strip():
-                        return content
-                    logger.warning("MiMo returned empty content, using fallback")
+                        # 记录 token 使用
+                        usage = data.get("usage", {})
+                        if usage:
+                            logger.info(f"[{request_id}] Tokens: prompt={usage.get('prompt_tokens', '?')} completion={usage.get('completion_tokens', '?')}")
+                        return content.strip()
+                    logger.warning(f"[{request_id}] Empty content from API")
                 return get_api_fallback()
         except httpx.TimeoutException:
-            if attempt < 2:
-                await asyncio.sleep(1 * (attempt + 1))
+            if attempt < 1:
+                await asyncio.sleep(1)
                 continue
             return _smart_fallback(messages)
-        except Exception:
-            if attempt < 2:
-                await asyncio.sleep(1 * (attempt + 1))
+        except Exception as e:
+            if attempt < 1:
+                await asyncio.sleep(1)
                 continue
+            logger.error(f"[{request_id}] API error: {e}")
             return _smart_fallback(messages)
 
     return _smart_fallback(messages)
 
 
 def _smart_fallback(messages: list) -> str:
-    """从语料库选场景化回复，替代硬编码兜底"""
-    # 提取最后一条用户消息
+    """从语料库选场景化回复"""
     last_user_msg = ""
     for m in reversed(messages):
         if m.get("role") == "user":
@@ -159,14 +168,14 @@ def _smart_fallback(messages: list) -> str:
 async def auto_summarize(user_id: str):
     """自动摘要对话历史"""
     try:
-        history = get_history(user_id, limit=50)
+        history = get_history(user_id, limit=30)
         if len(history) < SUMMARY_THRESHOLD:
             return
         summary_prompt = [
-            {"role": "system", "content": "请用3-5句话总结以下对话的关键信息，包括用户的名字、喜好、情绪状态、重要事件、承诺。直接输出总结。"},
-            {"role": "user", "content": "\n".join(f"{r}: {c}" for r, c in history)}
+            {"role": "system", "content": "用3句话总结对话要点：用户特征、情绪、重要事件。"},
+            {"role": "user", "content": "\n".join(f"{r}: {c}" for r, c in history[-20:])}
         ]
-        summary = await call_deepseek(summary_prompt)
+        summary = await call_deepseek(summary_prompt, max_tokens=MAX_TOKENS_SUMMARY)
         save_user_summary(user_id, summary)
     except Exception:
         pass
@@ -174,17 +183,11 @@ async def auto_summarize(user_id: str):
 
 async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
                       deadline: float = 0.0, skip_save_user: bool = False) -> str:
-    """获取 AI 回复（主入口）
-
-    Args:
-        deadline: API 硬超时（秒）。0 = 无超时。用于被动回复模式适配微信 5s 限制。
-                  超时时抛出 asyncio.TimeoutError，由上层利用微信重试机制交付缓存结果。
-        skip_save_user: 后台补发生成时跳过用户消息存储（首次调用已存）
-    """
+    """获取 AI 回复（主入口）"""
     if not user_message or not user_message.strip():
         return "你怎么不说话呀～"
 
-    user_message = user_message.strip()[:500]
+    user_message = user_message.strip()[:300]  # 限制输入长度
 
     # 检测性格指令
     persona_cmd_reply = apply_persona_command(user_id, user_message)
@@ -192,7 +195,7 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
         save_message(user_id, "assistant", persona_cmd_reply)
         return persona_cmd_reply
 
-    # 保存消息（仅首次）
+    # 保存消息
     if not skip_save_user:
         save_message(user_id, "user", user_message)
 
@@ -212,7 +215,7 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
             extract_memory_from_conversation(user_id, user_message, simple_reply)
             return simple_reply
 
-    # 后台摘要（仅首次触发）
+    # 后台摘要
     if not skip_save_user:
         msg_count = get_message_count(user_id)
         if msg_count > 0 and msg_count % SUMMARY_THRESHOLD == 0:
@@ -226,13 +229,11 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
 
     # 调用 API
     if deadline > 0:
-        # 被动回复模式：严格超时，让微信重试兜底
         reply = await asyncio.wait_for(
             call_deepseek(messages, request_id),
             timeout=deadline
         )
     else:
-        # 后台补发模式：无超时，耐心等
         reply = await call_deepseek(messages, request_id)
 
     # 保存回复
@@ -247,48 +248,25 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
 
 async def get_ai_image_reply(user_id: str, pic_url: str, text: str = "",
                              request_id: str = "") -> str:
-    """处理图片消息 —— 用上下文生成自然拟人回复"""
-    # 取最近的对话历史，结合图片消息生成自然回应
-    history = get_history(user_id, limit=5)
+    """处理图片消息"""
+    history = get_history(user_id, limit=3)
 
-    prompt = "朋友给你发了张图片。用1-2句话自然回他，不要说自己看不懂图片。可以猜一下是什么、或者调侃一下、或者回个表情包式的反应。"
+    prompt = "朋友发了图片。用1句话自然回应，可以猜内容或调侃。"
 
     messages = [{"role": "system", "content": prompt}]
-    for role, content in history[-4:]:
+    for role, content in history[-2:]:
         messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": "[发了张图片]"})
-
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    is_mimo = "mimo" in DEEPSEEK_MODEL
-    payload = {
-        "model": DEEPSEEK_MODEL,
-        "messages": messages,
-        "temperature": 0.6 if is_mimo else 0.8,
-        "max_tokens": 60 if is_mimo else 60
-    }
+    messages.append({"role": "user", "content": "[图片]"})
 
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            resp = await client.post(DEEPSEEK_API_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            if "choices" in data and data["choices"]:
-                content = data["choices"][0].get("message", {}).get("content", "")
-                # MiMo 推理模型不取 reasoning_content (那是思考过程)
-                if content and content.strip():
-                    save_message(user_id, "assistant", content)
-                    return content
+        reply = await call_deepseek(messages, request_id, max_tokens=MAX_TOKENS_IMAGE)
+        save_message(user_id, "assistant", reply)
+        return reply
     except Exception as e:
         logger.error(f"[{request_id}] Image reply error: {e}")
 
-    # 兜底
     return random.choice([
         "哈哈哈这是啥",
         "笑死，你哪来的图",
         "这图好搞笑",
-        "哇，你发的这是啥",
-        "有意思，再来一张",
     ])
