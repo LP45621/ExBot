@@ -186,57 +186,86 @@ def build_messages(user_message: str, history: list, user_memory: dict, emotion:
 
 
 def split_reply(text: str) -> list:
-    """拆分回复为多条短消息（标点切割 + 长度兜底）"""
+    """拆分回复为多条短消息 —— 模拟真人微信打字节奏"""
     if not text:
         return []
 
-    # 1. 标点切割
-    sentences = re.split(r'(?<=[。！？~…])\s*', text.strip())
+    text = text.strip()
+    # 去掉所有句号（女友不会用句号）
+    text = text.replace("。", "").replace("！", "！").replace("？", "？")
+
+    # 第一步：按强断句符切（！？~…\n）
+    strong_parts = re.split(r'[！？~…\n]+', text)
     result = []
-    for s in sentences:
-        s = s.strip()
-        if s and len(s) > 1:
-            result.append(s)
+    for part in strong_parts:
+        part = part.strip()
+        if not part:
+            continue
+        # 第二步：在每个强断句内部，按逗号/空格二次切
+        sub_parts = _split_by_comma(part)
+        result.extend(sub_parts)
 
-    # 2. 如果标点没切开（AI不用标点），按长度切
-    if not result or len(result) == 1:
-        combined = text.strip()
-        if len(combined) <= 15:
-            return [combined] if combined else []
-        # 按语义断点切：空格处、常见连接词前
-        chunks = _chunk_by_semantic(combined)
-        return chunks if chunks else [combined]
+    # 合并过短的（<2字）到前一条
+    merged = []
+    for s in result:
+        if merged and len(s) < 2:
+            merged[-1] += s
+        elif merged and len(merged[-1]) < 2:
+            merged[-1] += s
+        else:
+            merged.append(s)
 
+    # 过滤空
+    merged = [s for s in merged if s.strip()]
+    return merged if merged else [text]
+
+
+def _split_by_comma(text: str) -> list:
+    """按逗号和语义断点切，每条 2-15 字"""
+    if len(text) <= 15:
+        return [text]
+
+    # 按逗号切
+    parts = re.split(r'[，,]+', text)
+    result = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        if len(p) <= 15:
+            result.append(p)
+        else:
+            # 按连接词切，然后递归处理超长部分
+            chunks = _split_by_conjunction(p)
+            for chunk in chunks:
+                if len(chunk) > 15:
+                    result.extend(_split_by_comma(chunk))
+                else:
+                    result.append(chunk)
     return result
 
 
-def _chunk_by_semantic(text: str) -> list:
-    """把长文本按语义断点切成短句，每条≤15字"""
-    # 先按空格切
-    words = text.split()
-    chunks = []
-    current = ""
-    for w in words:
-        test = current + (" " if current else "") + w
-        if len(test) > 15 and current:
-            chunks.append(current.strip())
-            current = w
-        else:
-            current = test
-    if current.strip():
-        chunks.append(current.strip())
-    return chunks if len(chunks) > 1 else _chunk_by_fixed(text)
-
-
-def _chunk_by_fixed(text: str, size: int = 12) -> list:
-    """固定长度硬切"""
-    chunks = []
-    i = 0
-    while i < len(text):
-        end = min(i + size, len(text))
-        chunks.append(text[i:end].strip())
-        i = end
-    return chunks if len(chunks) > 1 else [text]
+def _split_by_conjunction(text: str) -> list:
+    """按连接词切长句"""
+    # 常见连接词
+    conjunctions = ["然后", "但是", "不过", "可是", "就是", "而且", "所以", "因为", "其实", "感觉"]
+    for conj in conjunctions:
+        idx = text.find(conj)
+        if 2 <= idx <= 15:
+            return [text[:idx], text[idx:]]
+    # 兜底：按长度硬切，优先找逗号和空格
+    if len(text) > 15:
+        # 找最后一个逗号
+        comma_pos = text.rfind('，', 2, 15)
+        if comma_pos > 0:
+            return [text[:comma_pos], text[comma_pos+1:]]
+        # 没有逗号就按空格切
+        space_pos = text.rfind(' ', 2, 15)
+        if space_pos > 0:
+            return [text[:space_pos], text[space_pos+1:]]
+        # 硬切
+        return [text[:12], text[12:]]
+    return [text]
 
 
 def extract_memory_from_conversation(user_id: str, user_msg: str, ai_reply: str):
