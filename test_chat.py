@@ -1,4 +1,4 @@
-"""网页测试界面 —— 浏览器直接聊，不走微信，带侧边调试面板+记忆备份+聊天记录"""
+"""网页测试界面 —— 浏览器直接聊，不走微信，带侧边调试面板+对话切换"""
 import time
 import json
 import os
@@ -32,8 +32,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f5f5;
 #sidebar .mood-fill{height:100%;border-radius:4px;transition:width 0.5s}
 #sidebar .memory-item{padding:6px 0;border-bottom:1px solid #222;font-size:12px;color:#aaa}
 #sidebar .memory-item .type{color:#00d4ff;font-size:11px}
-#sidebar button{background:#00d4ff;color:#1a1a2e;border:none;border-radius:6px;padding:8px 16px;font-size:12px;cursor:pointer;margin:8px 0;width:100%}
+#sidebar button{background:#00d4ff;color:#1a1a2e;border:none;border-radius:6px;padding:8px 16px;font-size:12px;cursor:pointer;margin:4px 0;width:100%}
 #sidebar button:hover{background:#00b8d4}
+#sidebar .conv-list{max-height:200px;overflow-y:auto;margin:8px 0}
+#sidebar .conv-item{padding:8px;border-radius:6px;cursor:pointer;margin:4px 0;background:#222;font-size:12px}
+#sidebar .conv-item:hover{background:#333}
+#sidebar .conv-item.active{background:#00d4ff;color:#1a1a2e}
+#sidebar .conv-item .conv-time{font-size:10px;color:#888}
+#sidebar .conv-item .conv-preview{margin-top:4px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sidebar .conv-item.active .conv-time,#sidebar .conv-item.active .conv-preview{color:#1a1a2e}
 #main{flex:1;display:flex;flex-direction:column}
 #chat{flex:1;overflow-y:auto;padding:16px;max-width:600px;margin:0 auto;width:100%}
 .msg{margin:8px 0;display:flex}
@@ -49,6 +56,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f5f5;
 </style>
 </head><body>
 <div id="sidebar">
+<h3>💬 对话列表</h3>
+<button onclick="newConversation()">➕ 新对话</button>
+<div class="conv-list" id="conv-list"></div>
+
 <h3>🤖 AI 状态</h3>
 <div class="stat"><span class="label">心情</span><span class="value" id="mood-text">-</span></div>
 <div class="desc">AI当前情绪描述，由对话内容动态更新</div>
@@ -77,13 +88,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f5f5;
 <div id="memory-list">加载中...</div>
 <button onclick="backupMemories()">📥 备份记忆</button>
 <button onclick="exportChat()">📥 导出聊天记录</button>
-<button onclick="clearChat()">🗑️ 清空聊天记录</button>
-
-<h3>👤 用户</h3>
-<div class="stat"><span class="label">用户ID</span><span class="value" id="user-id">-</span></div>
-<div class="desc">唯一标识，微信=OpenID，网页=随机生成</div>
-<div class="stat"><span class="label">消息数</span><span class="value" id="user-msgs">0</span></div>
-<div class="desc">你和AI总共聊了多少条消息</div>
+<button onclick="clearChat()">🗑️ 清空当前对话</button>
 </div>
 
 <div id="main">
@@ -97,32 +102,71 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f5f5;
 <script>
 const chat=document.getElementById('chat'),input=document.getElementById('input');
 const uid='web-'+Date.now();
-document.getElementById('user-id').textContent=uid.substring(0,16)+'...';
+let currentConvId=null;
 
-// 从localStorage加载聊天记录
-function loadChatHistory(){
-    const history=JSON.parse(localStorage.getItem('chat_'+uid)||'[]');
-    history.forEach(m=>addMsg(m.text,m.who,false));
+// 对话管理
+function getConversations(){return JSON.parse(localStorage.getItem('conversations')||'[]');}
+function saveConversations(convs){localStorage.setItem('conversations',JSON.stringify(convs));}
+function getConvMessages(convId){return JSON.parse(localStorage.getItem('conv_'+convId)||'[]');}
+function saveConvMessages(convId,msgs){localStorage.setItem('conv_'+convId,JSON.stringify(msgs));}
+
+function newConversation(){
+    const convs=getConversations();
+    const convId='conv_'+Date.now();
+    convs.unshift({id:convId,time:Date.now(),preview:'新对话'});
+    saveConversations(convs);
+    switchConversation(convId);
 }
-function saveChatHistory(){
-    const msgs=[];
-    chat.querySelectorAll('.msg').forEach(m=>{
-        msgs.push({text:m.querySelector('.bubble').textContent,who:m.classList.contains('user')?'user':'ai'});
+
+function switchConversation(convId){
+    currentConvId=convId;
+    chat.innerHTML='';
+    const msgs=getConvMessages(convId);
+    msgs.forEach(m=>addMsg(m.text,m.who,false));
+    renderConvList();
+}
+
+function renderConvList(){
+    const convs=getConversations();
+    const list=document.getElementById('conv-list');
+    list.innerHTML='';
+    convs.forEach(c=>{
+        const div=document.createElement('div');
+        div.className='conv-item'+(c.id===currentConvId?' active':'');
+        const d=new Date(c.time);
+        div.innerHTML='<div class="conv-time">'+d.toLocaleDateString()+' '+d.toLocaleTimeString()+'</div><div class="conv-preview">'+c.preview+'</div>';
+        div.onclick=()=>switchConversation(c.id);
+        list.appendChild(div);
     });
-    localStorage.setItem('chat_'+uid,JSON.stringify(msgs));
 }
 
+function updateConvPreview(){
+    if(!currentConvId)return;
+    const convs=getConversations();
+    const msgs=getConvMessages(currentConvId);
+    const lastMsg=msgs.length>0?msgs[msgs.length-1].text:'新对话';
+    const idx=convs.findIndex(c=>c.id===currentConvId);
+    if(idx>=0){convs[idx].preview=lastMsg.substring(0,30);convs[idx].time=Date.now();saveConversations(convs);renderConvList();}
+}
+
+// 消息管理
 function addMsg(text,who,save=true){
     const div=document.createElement('div');div.className='msg '+who;
     const b=document.createElement('div');b.className='bubble';b.textContent=text;
     div.appendChild(b);chat.appendChild(div);chat.scrollTop=chat.scrollHeight;
-    if(save)saveChatHistory();
+    if(save&&currentConvId){
+        const msgs=getConvMessages(currentConvId);
+        msgs.push({text,who,time:Date.now()});
+        saveConvMessages(currentConvId,msgs);
+        updateConvPreview();
+    }
 }
 function addTyping(){const d=document.createElement('div');d.className='typing';d.id='typing';d.textContent='对方正在输入...';chat.appendChild(d);chat.scrollTop=chat.scrollHeight;}
 function removeTyping(){const t=document.getElementById('typing');if(t)t.remove();}
 
 async function send(){
     const text=input.value.trim();if(!text)return;input.value='';
+    if(!currentConvId)newConversation();
     addMsg(text,'user');addTyping();
     try{
         const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,user_id:uid})});
@@ -155,7 +199,6 @@ async function updateDebug(){
         const ml=document.getElementById('memory-list');
         if(memories.length===0){ml.innerHTML='<div class="memory-item">暂无记忆</div>';}
         else{ml.innerHTML=memories.map(m=>'<div class="memory-item"><span class="type">['+m.type+']</span> '+m.content+'</div>').join('');}
-        document.getElementById('user-msgs').textContent=d.user_messages||0;
     }catch(e){}
 }
 
@@ -171,9 +214,10 @@ async function backupMemories(){
 }
 
 function exportChat(){
-    const history=JSON.parse(localStorage.getItem('chat_'+uid)||'[]');
-    if(history.length===0){alert('没有聊天记录');return;}
-    const text=history.map(m=>(m.user==='user'?'我':'AI')+': '+m.text).join('\\n');
+    if(!currentConvId){alert('没有对话');return;}
+    const msgs=getConvMessages(currentConvId);
+    if(msgs.length===0){alert('没有聊天记录');return;}
+    const text=msgs.map(m=>(m.who==='user'?'我':'AI')+': '+m.text).join('\\n');
     const blob=new Blob([text],{type:'text/plain'});
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
     a.download='chat_'+new Date().toISOString().slice(0,10)+'.txt';
@@ -181,12 +225,23 @@ function exportChat(){
 }
 
 function clearChat(){
-    if(confirm('确定清空聊天记录？')){localStorage.removeItem('chat_'+uid);chat.innerHTML='';}
+    if(!currentConvId)return;
+    if(confirm('确定清空当前对话？')){
+        localStorage.removeItem('conv_'+currentConvId);
+        chat.innerHTML='';
+        const convs=getConversations();
+        const idx=convs.findIndex(c=>c.id===currentConvId);
+        if(idx>=0){convs[idx].preview='新对话';saveConversations(convs);renderConvList();}
+    }
 }
 
 document.getElementById('send').onclick=send;
 input.onkeydown=e=>{if(e.key==='Enter')send()};
-loadChatHistory();
+
+// 初始化：加载最近对话或创建新对话
+const convs=getConversations();
+if(convs.length>0){switchConversation(convs[0].id);}
+else{newConversation();}
 updateDebug();
 setInterval(updateDebug,5000);
 </script></body></html>"""
@@ -250,13 +305,9 @@ setInterval(updateDebug,5000);
             return JSONResponse({"error": "需要user_id"}, status_code=400)
 
         try:
-            # 聊天历史
             history = get_history(user_id, limit=1000)
-            # 用户画像
             user_info = get_user_info(user_id)
-            # 自动记忆
             auto_mem = load_user_memory(user_id)
-            # 长期记忆
             mem_system = get_memory_system()
             long_mem = mem_system.recall(user_id, "", top_k=50)
 
