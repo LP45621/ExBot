@@ -1,7 +1,9 @@
-"""网页测试界面 —— 浏览器直接聊，不走微信，带侧边调试面板"""
+"""网页测试界面 —— 浏览器直接聊，不走微信，带侧边调试面板+记忆备份+聊天记录"""
 import time
+import json
+import os
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from ai import get_ai_reply
 from engine import split_reply, _mood_engine, get_memory_system
@@ -30,6 +32,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f5f5;
 #sidebar .mood-fill{height:100%;border-radius:4px;transition:width 0.5s}
 #sidebar .memory-item{padding:6px 0;border-bottom:1px solid #222;font-size:12px;color:#aaa}
 #sidebar .memory-item .type{color:#00d4ff;font-size:11px}
+#sidebar button{background:#00d4ff;color:#1a1a2e;border:none;border-radius:6px;padding:8px 16px;font-size:12px;cursor:pointer;margin:8px 0;width:100%}
+#sidebar button:hover{background:#00b8d4}
 #main{flex:1;display:flex;flex-direction:column}
 #chat{flex:1;overflow-y:auto;padding:16px;max-width:600px;margin:0 auto;width:100%}
 .msg{margin:8px 0;display:flex}
@@ -71,6 +75,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f5f5;
 <h3>💾 记忆</h3>
 <div class="desc">AI记住的关于你的事情（遗忘曲线衰减）</div>
 <div id="memory-list">加载中...</div>
+<button onclick="backupMemories()">📥 备份记忆</button>
+<button onclick="exportChat()">📥 导出聊天记录</button>
+<button onclick="clearChat()">🗑️ 清空聊天记录</button>
 
 <h3>👤 用户</h3>
 <div class="stat"><span class="label">用户ID</span><span class="value" id="user-id">-</span></div>
@@ -92,10 +99,24 @@ const chat=document.getElementById('chat'),input=document.getElementById('input'
 const uid='web-'+Date.now();
 document.getElementById('user-id').textContent=uid.substring(0,16)+'...';
 
-function addMsg(text,who){
+// 从localStorage加载聊天记录
+function loadChatHistory(){
+    const history=JSON.parse(localStorage.getItem('chat_'+uid)||'[]');
+    history.forEach(m=>addMsg(m.text,m.who,false));
+}
+function saveChatHistory(){
+    const msgs=[];
+    chat.querySelectorAll('.msg').forEach(m=>{
+        msgs.push({text:m.querySelector('.bubble').textContent,who:m.classList.contains('user')?'user':'ai'});
+    });
+    localStorage.setItem('chat_'+uid,JSON.stringify(msgs));
+}
+
+function addMsg(text,who,save=true){
     const div=document.createElement('div');div.className='msg '+who;
     const b=document.createElement('div');b.className='bubble';b.textContent=text;
     div.appendChild(b);chat.appendChild(div);chat.scrollTop=chat.scrollHeight;
+    if(save)saveChatHistory();
 }
 function addTyping(){const d=document.createElement('div');d.className='typing';d.id='typing';d.textContent='对方正在输入...';chat.appendChild(d);chat.scrollTop=chat.scrollHeight;}
 function removeTyping(){const t=document.getElementById('typing');if(t)t.remove();}
@@ -115,7 +136,6 @@ async function updateDebug(){
     try{
         const r=await fetch('/api/debug?user_id='+uid);
         const d=await r.json();
-        // 心情
         const m=d.mood||{};
         document.getElementById('mood-text').textContent=m.description||'-';
         document.getElementById('mood-value').textContent=(m.current||0).toFixed(2);
@@ -125,25 +145,48 @@ async function updateDebug(){
         const bar=document.getElementById('mood-bar');
         bar.style.width=((m.current||0.5)*100)+'%';
         bar.style.background=m.current>0.6?'#00d4ff':m.current>0.3?'#ffaa00':'#ff4444';
-        // 统计
         const s=d.stats||{};
         document.getElementById('stat-requests').textContent=s.total_requests||0;
         document.getElementById('stat-messages').textContent=s.total_messages||0;
         document.getElementById('stat-errors').textContent=s.total_errors||0;
         const up=Math.floor(s.uptime||0);
         document.getElementById('stat-uptime').textContent=up>3600?Math.floor(up/3600)+'h':up>60?Math.floor(up/60)+'m':up+'s';
-        // 记忆
         const memories=d.memories||[];
         const ml=document.getElementById('memory-list');
         if(memories.length===0){ml.innerHTML='<div class="memory-item">暂无记忆</div>';}
         else{ml.innerHTML=memories.map(m=>'<div class="memory-item"><span class="type">['+m.type+']</span> '+m.content+'</div>').join('');}
-        // 用户
         document.getElementById('user-msgs').textContent=d.user_messages||0;
     }catch(e){}
 }
 
+async function backupMemories(){
+    try{
+        const r=await fetch('/api/backup?user_id='+uid);
+        const d=await r.json();
+        const blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
+        const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+        a.download='memory_backup_'+new Date().toISOString().slice(0,10)+'.json';
+        a.click();
+    }catch(e){alert('备份失败: '+e);}
+}
+
+function exportChat(){
+    const history=JSON.parse(localStorage.getItem('chat_'+uid)||'[]');
+    if(history.length===0){alert('没有聊天记录');return;}
+    const text=history.map(m=>(m.user==='user'?'我':'AI')+': '+m.text).join('\\n');
+    const blob=new Blob([text],{type:'text/plain'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download='chat_'+new Date().toISOString().slice(0,10)+'.txt';
+    a.click();
+}
+
+function clearChat(){
+    if(confirm('确定清空聊天记录？')){localStorage.removeItem('chat_'+uid);chat.innerHTML='';}
+}
+
 document.getElementById('send').onclick=send;
 input.onkeydown=e=>{if(e.key==='Enter')send()};
+loadChatHistory();
 updateDebug();
 setInterval(updateDebug,5000);
 </script></body></html>"""
@@ -196,3 +239,34 @@ setInterval(updateDebug,5000);
             "memories": memories,
             "user_messages": get_message_count(user_id) if user_id else 0,
         }
+
+    @app.get("/api/backup")
+    async def api_backup(user_id: str = ""):
+        """记忆备份接口：导出用户所有记忆"""
+        from memory import get_history, get_user_info
+        from auto_memory import load_user_memory
+
+        if not user_id:
+            return JSONResponse({"error": "需要user_id"}, status_code=400)
+
+        try:
+            # 聊天历史
+            history = get_history(user_id, limit=1000)
+            # 用户画像
+            user_info = get_user_info(user_id)
+            # 自动记忆
+            auto_mem = load_user_memory(user_id)
+            # 长期记忆
+            mem_system = get_memory_system()
+            long_mem = mem_system.recall(user_id, "", top_k=50)
+
+            return {
+                "user_id": user_id,
+                "backup_time": time.time(),
+                "chat_history": [{"role": r, "content": c} for r, c in history],
+                "user_profile": user_info,
+                "auto_memory": auto_mem,
+                "long_term_memories": [{"type": m.get("memory_type"), "content": m.get("content"), "importance": m.get("importance")} for m in long_mem],
+            }
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
