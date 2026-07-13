@@ -321,3 +321,192 @@ setInterval(updateDebug,5000);
             }
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/chat", response_class=HTMLResponse)
+    async def chat_page():
+        """DeepSeek风格聊天界面"""
+        return """<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Chat</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f7f7f8;height:100vh;display:flex}
+#sidebar{width:260px;background:#1e1e2e;color:#eee;display:flex;flex-direction:column}
+#sidebar-header{padding:16px;border-bottom:1px solid #333}
+#sidebar-header h2{font-size:16px;color:#fff;margin-bottom:12px}
+#new-chat{width:100%;padding:10px;background:#2d2d3e;border:1px solid #444;border-radius:8px;color:#fff;cursor:pointer;font-size:13px}
+#new-chat:hover{background:#3d3d4e}
+#conv-list{flex:1;overflow-y:auto;padding:8px}
+.conv-item{padding:10px 12px;border-radius:8px;cursor:pointer;margin:4px 0;font-size:13px;color:#ccc}
+.conv-item:hover{background:#2d2d3e}
+.conv-item.active{background:#3d3d4e;color:#fff}
+.conv-item .conv-preview{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#main{flex:1;display:flex;flex-direction:column;background:#fff}
+#header{padding:12px 20px;border-bottom:1px solid #e5e5e5;display:flex;align-items:center;gap:12px}
+#header .model-select{padding:6px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;background:#fff}
+#messages{flex:1;overflow-y:auto;padding:20px;max-width:800px;margin:0 auto;width:100%}
+.msg{margin:16px 0;display:flex}
+.msg.user{justify-content:flex-end}
+.msg.ai{justify-content:start}
+.msg .avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.msg.user .avatar{background:#95ec69;color:#000}
+.msg.ai .avatar{background:#4a90d9;color:#fff}
+.msg .content{max-width:70%;padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.6;word-break:break-word}
+.msg.user .content{background:#95ec69;color:#000;border-bottom-right-radius:4px;margin-right:8px}
+.msg.ai .content{background:#f0f0f0;color:#000;border-bottom-left-radius:4px;margin-left:8px}
+#input-area{padding:16px 20px;border-top:1px solid #e5e5e5;background:#fff}
+#input-wrapper{max-width:800px;margin:0 auto;display:flex;gap:12px;align-items:flex-end}
+#input{flex:1;border:1px solid #ddd;border-radius:12px;padding:12px 16px;font-size:14px;outline:none;resize:none;min-height:44px;max-height:200px;font-family:inherit}
+#input:focus{border-color:#4a90d9}
+#send{background:#4a90d9;color:#fff;border:none;border-radius:12px;padding:12px 24px;font-size:14px;cursor:pointer}
+#send:hover{background:#3a7bc8}
+#send:disabled{background:#ccc;cursor:not-allowed}
+.typing{color:#999;font-size:13px;padding:8px 16px;display:none}
+.welcome{text-align:center;color:#999;margin-top:40px}
+.welcome h2{color:#333;margin-bottom:8px}
+</style>
+</head><body>
+<div id="sidebar">
+<div id="sidebar-header">
+<h2>💬 AI Chat</h2>
+<button id="new-chat" onclick="newConversation()">+ 新对话</button>
+</div>
+<div id="conv-list"></div>
+</div>
+<div id="main">
+<div id="header">
+<select class="model-select" id="model-select">
+<option value="deepseek-chat">DeepSeek Chat</option>
+<option value="deepseek-coder">DeepSeek Coder</option>
+</select>
+<span style="color:#999;font-size:13px" id="status">就绪</span>
+</div>
+<div id="messages">
+<div class="welcome">
+<h2>👋 你好！</h2>
+<p>我是AI助手，有什么可以帮你的？</p>
+</div>
+</div>
+<div id="typing" class="typing">AI正在思考...</div>
+<div id="input-area">
+<div id="input-wrapper">
+<textarea id="input" placeholder="输入消息..." rows="1"></textarea>
+<button id="send" onclick="send()">发送</button>
+</div>
+</div>
+</div>
+<script>
+const messages=document.getElementById('messages'),input=document.getElementById('input');
+const uid='chat-'+Date.now();
+let currentConvId=null;
+let isTyping=false;
+
+// 对话管理
+function getConversations(){return JSON.parse(localStorage.getItem('chat_convs')||'[]');}
+function saveConversations(convs){localStorage.setItem('chat_convs',JSON.stringify(convs));}
+function getConvMessages(convId){return JSON.parse(localStorage.getItem('chat_msg_'+convId)||'[]');}
+function saveConvMessages(convId,msgs){localStorage.setItem('chat_msg_'+convId,JSON.stringify(msgs));}
+
+function newConversation(){
+    const convs=getConversations();
+    const convId='conv_'+Date.now();
+    convs.unshift({id:convId,time:Date.now(),preview:'新对话'});
+    saveConversations(convs);
+    switchConversation(convId);
+}
+
+function switchConversation(convId){
+    currentConvId=convId;
+    messages.innerHTML='';
+    const msgs=getConvMessages(convId);
+    if(msgs.length===0){
+        messages.innerHTML='<div class="welcome"><h2>👋 你好！</h2><p>我是AI助手，有什么可以帮你的？</p></div>';
+    }else{
+        msgs.forEach(m=>addMsg(m.text,m.who,false));
+    }
+    renderConvList();
+}
+
+function renderConvList(){
+    const convs=getConversations();
+    const list=document.getElementById('conv-list');
+    list.innerHTML='';
+    convs.forEach(c=>{
+        const div=document.createElement('div');
+        div.className='conv-item'+(c.id===currentConvId?' active':'');
+        div.innerHTML='<div class="conv-preview">'+c.preview+'</div>';
+        div.onclick=()=>switchConversation(c.id);
+        list.appendChild(div);
+    });
+}
+
+function addMsg(text,who,save=true){
+    const welcome=messages.querySelector('.welcome');
+    if(welcome)welcome.remove();
+    
+    const div=document.createElement('div');div.className='msg '+who;
+    const avatar=document.createElement('div');avatar.className='avatar';
+    avatar.textContent=who==='user'?'我':'AI';
+    const content=document.createElement('div');content.className='content';
+    content.textContent=text;
+    if(who==='user'){div.appendChild(content);div.appendChild(avatar);}
+    else{div.appendChild(avatar);div.appendChild(content);}
+    messages.appendChild(div);
+    messages.scrollTop=messages.scrollHeight;
+    
+    if(save&&currentConvId){
+        const msgs=getConvMessages(currentConvId);
+        msgs.push({text,who,time:Date.now()});
+        saveConvMessages(currentConvId,msgs);
+        updateConvPreview();
+    }
+}
+
+function updateConvPreview(){
+    if(!currentConvId)return;
+    const convs=getConversations();
+    const msgs=getConvMessages(currentConvId);
+    const lastMsg=msgs.length>0?msgs[msgs.length-1].text:'新对话';
+    const idx=convs.findIndex(c=>c.id===currentConvId);
+    if(idx>=0){convs[idx].preview=lastMsg.substring(0,30);convs[idx].time=Date.now();saveConversations(convs);renderConvList();}
+}
+
+async function send(){
+    const text=input.value.trim();if(!text||isTyping)return;input.value='';
+    if(!currentConvId)newConversation();
+    addMsg(text,'user');
+    
+    isTyping=true;
+    document.getElementById('typing').style.display='block';
+    document.getElementById('send').disabled=true;
+    document.getElementById('status').textContent='思考中...';
+    
+    try{
+        const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,user_id:uid})});
+        const d=await r.json();
+        if(d.reply){addMsg(d.reply,'ai');}
+    }catch(e){addMsg('发送失败，请重试','ai');}
+    
+    isTyping=false;
+    document.getElementById('typing').style.display='none';
+    document.getElementById('send').disabled=false;
+    document.getElementById('status').textContent='就绪';
+}
+
+// 自动调整输入框高度
+input.addEventListener('input',function(){
+    this.style.height='auto';
+    this.style.height=Math.min(this.scrollHeight,200)+'px';
+});
+
+input.onkeydown=e=>{
+    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
+};
+
+// 初始化
+const convs=getConversations();
+if(convs.length>0){switchConversation(convs[0].id);}
+else{newConversation();}
+</script></body></html>"""
