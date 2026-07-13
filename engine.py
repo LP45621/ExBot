@@ -1,12 +1,8 @@
 """核心引擎 - 深度优化版"""
-import sys
-import os
 import time
 import random
 import re
 from datetime import datetime
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "less_tokens_pkg"))
 
 from config import (
     SIMPLE_REPLIES, EMOTION_KEYWORDS, INTENT_KEYWORDS,
@@ -20,7 +16,6 @@ from human_memory import HumanLikeMemory
 _mood_engine = MoodEngine()
 _emotion_detector = EmotionDetector()
 _memory_system = None
-_script_db = None
 
 
 def get_memory_system():

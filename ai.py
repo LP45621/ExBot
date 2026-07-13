@@ -1,14 +1,10 @@
-"""AI 模块 - 深度优化版"""
-import sys
-import os
+"""AI 模块"""
 import httpx
 import random
 import asyncio
 import logging
 
 logger = logging.getLogger("wechat")
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "less_tokens_pkg"))
 
 from config import (
     DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL,
@@ -22,7 +18,7 @@ from token_optimizer import compress_history
 from auto_memory import load_user_memory, update_memory_from_conversation, get_memory_context
 from engine import (
     detect_emotion, detect_intent, get_simple_reply, should_use_llm,
-    route_model, build_messages, _mood_engine, _emotion_detector,
+    route_model, build_messages,
     extract_memory_from_conversation, get_memory_system
 )
 from reply_fallback import get_fallback_reply, get_api_fallback
@@ -101,22 +97,8 @@ USE_MOCK = not DEEPSEEK_API_KEY or DEEPSEEK_API_KEY.startswith("your_")
 
 
 async def call_deepseek(messages: list, request_id: str = "") -> str:
-    """调用 MiMo API（带超时、重试、指数退避）"""
+    """调用 API（带超时、重试）"""
     if USE_MOCK:
-        last_msg = messages[-1]["content"] if messages else ""
-        from engine import get_script_db
-        get = get_script_db()
-        if get:
-            emotion = detect_emotion(last_msg)
-            intent = detect_intent(last_msg)
-            if intent:
-                reply = get(intent if intent != "hello" else "hello")
-                if reply:
-                    return reply
-            if emotion and emotion != "neutral":
-                reply = get("emotional_responses", emotion)
-                if reply:
-                    return reply
         return get_api_fallback()
 
     headers = {

@@ -1,0 +1,11 @@
+.git
+__pycache__
+*.pyc
+*.db
+.env
+.reasonix
+reasonix.toml
+natapp.exe
+natapp*
+*.md
+!README.md

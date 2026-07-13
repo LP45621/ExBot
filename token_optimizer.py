@@ -1,10 +1,12 @@
-"""Token 压缩模块 - 无限历史 + 分级压缩"""
-import sys
+"""Token 压缩模块 - 分级压缩（可选依赖 less_tokens）"""
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "less_tokens_pkg"))
-
-from less_tokens import smart_compress
+# less_tokens 为可选依赖，不可用时使用基础压缩
+try:
+    from less_tokens import smart_compress
+    HAS_SMART_COMPRESS = True
+except ImportError:
+    HAS_SMART_COMPRESS = False
 
 # 压缩级别配置
 COMPRESS_CONFIG = {
@@ -32,23 +34,36 @@ HEAVY_FLAGS = {
     "apply_contractions": 1,
 }
 
+_FILLER_PHRASES = ["嗯嗯", "然后呢", "就是说", "其实", "那个", "怎么说呢"]
+
+
+def _basic_compress(message: str, level: str = "light") -> str:
+    """基础压缩：去除冗余标点和填充词"""
+    if not message:
+        return message
+    # 去除重复标点
+    import re
+    msg = re.sub(r'[。！？]{2,}', '。', message)
+    msg = re.sub(r'[~～]{2,}', '～', msg)
+    if level in ("medium", "heavy"):
+        for filler in _FILLER_PHRASES:
+            msg = msg.replace(filler, "")
+    if level == "heavy" and len(msg) > 60:
+        msg = msg[:60] + "..."
+    return msg.strip() or message
+
 
 def compress_message(message: str, level: str = "light") -> str:
     """压缩单条消息"""
     if not message or len(message) < 30:
         return message
-
     try:
-        if level == "light":
-            return smart_compress(message, **LIGHT_FLAGS)
-        elif level == "medium":
-            return smart_compress(message, **MEDIUM_FLAGS)
-        elif level == "heavy":
-            return smart_compress(message, **HEAVY_FLAGS)
-        else:
-            return message
+        if HAS_SMART_COMPRESS:
+            flags = {"light": LIGHT_FLAGS, "medium": MEDIUM_FLAGS, "heavy": HEAVY_FLAGS}
+            return smart_compress(message, **flags.get(level, LIGHT_FLAGS))
+        return _basic_compress(message, level)
     except Exception:
-        return message
+        return _basic_compress(message, level)
 
 
 def compress_history(history: list) -> list:
@@ -62,21 +77,15 @@ def compress_history(history: list) -> list:
 
     result = []
     for i, (role, content) in enumerate(history):
-        total_idx = len(history) - 1 - i  # 从最新消息开始计数
+        total_idx = len(history) - 1 - i
 
         if total_idx < recent:
-            # 最近的消息：完整保留
             result.append((role, content))
         elif total_idx < light:
-            # 中期消息：轻度压缩
-            compressed = compress_message(content, "light")
-            result.append((role, compressed))
+            result.append((role, compress_message(content, "light")))
         elif total_idx < medium:
-            # 远期消息：中度压缩
-            compressed = compress_message(content, "medium")
-            result.append((role, compressed))
+            result.append((role, compress_message(content, "medium")))
         else:
-            # 超远期：重度压缩
             compressed = compress_message(content, "heavy")
             if compressed and len(compressed) > 10:
                 result.append((role, compressed))
@@ -90,7 +99,6 @@ def get_compression_stats(original: list, compressed: list) -> dict:
     comp_len = sum(len(c) for _, c in compressed)
     saved = orig_len - comp_len
     ratio = saved / orig_len if orig_len > 0 else 0
-
     return {
         "original_messages": len(original),
         "compressed_messages": len(compressed),

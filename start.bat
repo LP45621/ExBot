@@ -1,10 +1,10 @@
 @echo off
 chcp 65001 >nul
 echo ========================
-echo   微信AI陪伴助手
+echo   WeChat AI Companion
 echo   Port: 53065
 echo ========================
 echo.
-echo 启动服务中...
+pip install -r requirements.txt --quiet 2>nul
 python main.py
 pause

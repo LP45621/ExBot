@@ -1,10 +1,18 @@
-"""微信公众号 AI 陪伴助手 - 最终优化版"""
+"""微信公众号 AI 陪伴助手"""
 import hashlib
 import time
 import uuid
 import random
 import logging
 import asyncio
+
+# 启动时加载 .env（优先级低于系统环境变量）
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import defusedxml.ElementTree as ET
 from collections import defaultdict
 from fastapi import FastAPI, Request
@@ -164,9 +172,6 @@ async def _bg_generate_reply(msg_id: str, user_id: str, content: str, request_id
         _processing_ids.discard(msg_id)
 
 
-def check_duplicate(body: bytes) -> bool:
-    """保留旧接口兼容性（已不再使用 body hash 去重，改由 _reply_cache / _processing_ids 管理）"""
-    return False
 
 
 app = FastAPI(title="微信AI陪伴助手")

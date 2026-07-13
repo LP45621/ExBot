@@ -1,6 +1,7 @@
 # 敏感配置
 .wechat_token
 .env
+config.py
 *.db
 
 # Python
@@ -16,15 +17,13 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# 隧道工具二进制
+# 隧道工具
 natapp.exe
-natapp_windows_amd64.zip
-natapp.zip
-d/
+natapp*
 
 # 用户测试数据
 user_memories/*.json
 
-# 附件缓存
-.reasonix/attachments/
+# Reasonix工具目录
+.reasonix/
 reasonix.toml

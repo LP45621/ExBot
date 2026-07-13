@@ -1,4 +1,4 @@
-"""配置文件 —— 所有敏感配置从环境变量读取"""
+"""配置文件模板 - 复制为 config.py 并填入真实值"""
 import os
 import secrets
 
@@ -12,29 +12,21 @@ PORT = int(os.environ.get("PORT", "53065"))
 DB_PATH = os.path.join(BASE_DIR, "chat.db")
 MEMORY_DB_PATH = os.path.join(BASE_DIR, "human_memory.db")
 
-# ====== 敏感配置：全部从环境变量读取 ======
+# ====== 以下为敏感配置，务必从环境变量或 .env 文件读取 ======
 
-# 微信公众号 Token（签名验证用）
-WECHAT_TOKEN = os.environ.get("WECHAT_TOKEN", "")
-if not WECHAT_TOKEN:
-    _token_file = os.path.join(BASE_DIR, ".wechat_token")
-    if os.path.exists(_token_file):
-        with open(_token_file, "r") as f:
-            WECHAT_TOKEN = f.read().strip()
-    if not WECHAT_TOKEN:
-        WECHAT_TOKEN = secrets.token_hex(16)
-        with open(_token_file, "w") as f:
-            f.write(WECHAT_TOKEN)
+# 微信公众号 Token（用于签名验证，自动生成即可）
+WECHAT_TOKEN = os.environ.get("WECHAT_TOKEN", "your-wechat-token-here")
 
-WECHAT_APPID = os.environ.get("WECHAT_APPID", "")
-WECHAT_APPSECRET = os.environ.get("WECHAT_APPSECRET", "")
+# 微信公众号 AppID / AppSecret
+WECHAT_APPID = os.environ.get("WECHAT_APPID", "your-appid-here")
+WECHAT_APPSECRET = os.environ.get("WECHAT_APPSECRET", "your-appsecret-here")
 
 # API 配置（MiMo / DeepSeek）
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "your-api-key-here")
 DEEPSEEK_API_URL = os.environ.get("DEEPSEEK_API_URL", "https://token-plan-cn.xiaomimimo.com/v1/chat/completions")
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "mimo-v2.5-pro")
 
-# ====== 业务配置 ======
+# ====== 以下为业务配置，按需修改 ======
 
 # 简单回复模板（不调用LLM）
 SIMPLE_REPLIES = {
