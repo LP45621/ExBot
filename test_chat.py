@@ -549,7 +549,7 @@ input.onkeydown=e=>{
     if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
 };
 
-// 主动消息轮询
+// 主动消息轮询（支持延迟逐条发送）
 async function checkPendingMessages(){
     try{
         const r=await fetch('/api/pending_messages?user_id='+uid);
@@ -565,8 +565,11 @@ async function checkPendingMessages(){
             divider.insertBefore(line,divider.firstChild);
             messages.appendChild(divider);
             
-            d.messages.forEach(m=>{
-                addProactiveMsg(m.content,m.timestamp,m.silence_minutes);
+            // 延迟逐条发送（模拟真人打字节奏）
+            d.messages.forEach((m, i)=>{
+                setTimeout(()=>{
+                    addProactiveMsg(m.content, m.timestamp + i*2, m.silence_minutes);
+                }, i * 1500); // 每条间隔1.5秒
             });
         }
     }catch(e){}

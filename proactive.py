@@ -1,6 +1,8 @@
-"""主动消息系统 —— AI女友久不回复主动回话"""
+"""主动消息系统 v2 —— 消息序列生成（2-3条连发）"""
 import time
+import json
 import random
+import re
 import logging
 import asyncio
 from datetime import datetime
@@ -20,33 +22,6 @@ COOLDOWN_SECONDS = 60 * 60  # 60分钟
 
 # 每日上限
 DAILY_LIMIT = 6
-
-# 兜底模板（大模型失败时使用）
-FALLBACK_TEMPLATES = {
-    "light": [
-        "在干嘛呢～",
-        "突然安静了，是去忙了吗？",
-        "嗯？怎么不说话了",
-        "在忙吗",
-    ],
-    "medium": [
-        "这都半小时了，你在干嘛呀",
-        "好久没理我了，是不是把我忘了",
-        "刚才聊着聊着就不见了",
-        "你去哪了呀",
-    ],
-    "deep": [
-        "已经一个多小时了诶……刚才在忙什么重要的事嘛",
-        "等你等了好久，不会又加班吧",
-        "一个多小时没理我了……是不是我话太多啦",
-        "你终于舍得回来了？我都快睡着了",
-    ],
-    "long": [
-        "刚才看到一只超胖的橘猫，突然想到你～你忙完记得回我哦",
-        "下午茶时间啦，你吃点东西了没",
-        "好久没聊了，想你了",
-    ],
-}
 
 
 def get_silence_level(seconds_ago: int) -> str:
@@ -85,55 +60,128 @@ def is_quiet_hours() -> bool:
     return hour >= 23 or hour < 6
 
 
-def build_proactive_prompt(last_message: str, silence_minutes: int, level: str) -> str:
-    """构建主动消息生成的Prompt"""
+def extract_topic(last_message: str) -> str:
+    """从用户最后消息中提取话题关键词"""
+    if not last_message:
+        return "聊天"
+    
+    # 去掉常见无意义词
+    stop_words = {"了", "的", "吧", "吗", "呢", "啊", "呀", "哦", "嗯", "我", "你", "在", "是"}
+    
+    # 提取关键词：取最后一条消息的核心内容
+    msg = last_message.strip()
+    
+    # 如果消息很短（<10字），直接用
+    if len(msg) <= 10:
+        return msg
+    
+    # 取前15个字作为话题
+    return msg[:15]
+
+
+def detect_emotion_tag(last_message: str) -> str:
+    """简单情绪检测（省模型开销）"""
+    if not last_message:
+        return "平淡"
+    
+    msg = last_message
+    
+    # 疲惫/负面
+    if any(word in msg for word in ["累", "困", "烦", "忙", "唉", "烦死了", "好累", "加班", "熬夜"]):
+        return "疲惫"
+    # 开心/正面
+    elif any(word in msg for word in ["开心", "哈哈", "太好了", "棒", "爽", "好棒", "耶"]):
+        return "开心"
+    # 难过
+    elif any(word in msg for word in ["难过", "伤心", "不开心", "郁闷", "想哭"]):
+        return "难过"
+    # 生气
+    elif any(word in msg for word in ["生气", "气死", "讨厌", "烦死了"]):
+        return "生气"
+    
+    return "平淡"
+
+
+def build_proactive_prompt(last_topic: str, last_emotion: str, silence_minutes: int) -> str:
+    """构建极简Prompt（只传3个变量）"""
     time_ctx = get_time_context()
     
-    level_instructions = {
-        "light": "简短关心，不给他压力。1-2句话。",
-        "medium": "结合他最后说的话追问一句，可以稍微撒娇。2-3句话。",
-        "deep": "略带一丝埋怨但更多是担心，问他忙什么去了。2-3句话。",
-        "long": "主动分享一个事或趣闻，给他台阶回来聊。2-3句话。",
-    }
-    
-    return f"""你是一个细腻、粘人但有分寸的女友。
+    return f"""# 角色与目标
+你是粘人细腻的女友。当男友久不回复时，生成2~3条连续微信短句（数组形式），模拟真人边等边碎碎念。
 
-现在是{time_ctx}，距离男友上一次说话已经过去了{silence_minutes}分钟。
-他最后说的话是：「{last_message}」
+# 输入变量
+1. last_topic：用户最后提到的具体事物：「{last_topic}」
+2. last_emotion：用户最后情绪：{last_emotion}
+3. silence_min：沉默分钟数：{silence_minutes}
 
-请生成一句主动问候（只输出纯文本，不加前缀）：
-- {level_instructions.get(level, "简短关心。")}
+# 生成规则（硬性）
+- 输出格式：仅输出 JSON 数组，如 ["句子1", "句子2"] 或 ["句子1", "句子2", "句子3"]
+- 第1条：必须包含 last_topic 原词，并共情 last_emotion（累就心疼，烦就顺毛，开心就调侃）
+- 第2条：必须提及"快{silence_minutes}分钟了"或"这么久"，并附带一句自己在干嘛
+- 第3条（如有）：必须针对 last_topic 提出一个具体追问
+- 单条字数：严格 ≤ 25 个汉字
+- 禁止：说教、讲大道理、发长句、加括号备注、加表情符号
 
-硬性要求：
-1. 自然带出时间概念（如"刚才"、"这都快一小时了"）
-2. 字数严格控制在15-40字以内
-3. 不要用句号，像微信气泡一样短
-4. 不要用括号动作"""
+# 当前时间语境
+现在是{time_ctx}，语气要贴合这个时间段的状态（深夜就温柔小声感，午休就俏皮感）"""
 
 
-async def generate_proactive_message(last_message: str, silence_minutes: int, level: str) -> str:
-    """生成主动消息（优先用大模型，失败用模板）"""
+def get_fallback_messages(last_topic: str, silence_minutes: int) -> list:
+    """本地兜底模板（模型失败时使用）"""
+    if silence_minutes < 30:
+        return [
+            f"突然安静了，{last_topic}弄完了吗",
+            "我刚想给你发消息来着"
+        ]
+    elif silence_minutes < 60:
+        return [
+            f"都{silence_minutes}分钟了，{last_topic}还没搞定吗",
+            "要不要休息下陪我聊两句"
+        ]
+    else:
+        return [
+            f"快一个多小时了诶，{last_topic}那么难搞吗",
+            "我刚刚看到个好玩的东西，等你忙完跟你说"
+        ]
+
+
+async def generate_proactive_messages(last_message: str, silence_minutes: int) -> list:
+    """生成主动消息序列（2-3条）"""
     from ai import call_deepseek
     
-    prompt = build_proactive_prompt(last_message, silence_minutes, level)
+    # 提取变量
+    last_topic = extract_topic(last_message)
+    last_emotion = detect_emotion_tag(last_message)
+    
+    # 构建极简Prompt
+    prompt = build_proactive_prompt(last_topic, last_emotion, silence_minutes)
     messages = [{"role": "user", "content": prompt}]
     
     try:
-        reply = await call_deepseek(messages, max_tokens=60)
-        if reply and len(reply.strip()) > 2:
-            return reply.strip()
+        reply = await call_deepseek(messages, max_tokens=120)
+        if reply:
+            # 尝试解析JSON数组
+            reply = reply.strip()
+            # 提取JSON部分
+            json_match = re.search(r'\[.*\]', reply, re.DOTALL)
+            if json_match:
+                msg_list = json.loads(json_match.group())
+                if isinstance(msg_list, list) and len(msg_list) >= 2:
+                    # 过滤并验证
+                    valid_msgs = [m.strip() for m in msg_list if isinstance(m, str) and len(m.strip()) > 1]
+                    if len(valid_msgs) >= 2:
+                        return valid_msgs[:3]  # 最多3条
     except Exception as e:
         logger.warning(f"Proactive message generation failed: {e}")
     
-    # 兜底：随机模板
-    templates = FALLBACK_TEMPLATES.get(level, FALLBACK_TEMPLATES["light"])
-    return random.choice(templates)
+    # 兜底：本地模板
+    return get_fallback_messages(last_topic, silence_minutes)
 
 
 async def check_and_generate_proactive(user_id: str) -> dict:
-    """检查用户沉默状态，生成主动消息
+    """检查用户沉默状态，生成主动消息序列
     
-    返回: {"should_send": bool, "message": str, "level": str, "silence_minutes": int}
+    返回: {"should_send": bool, "messages": list, "level": str, "silence_minutes": int}
     """
     from memory import (
         get_last_user_message, get_last_initiative_time,
@@ -169,18 +217,19 @@ async def check_and_generate_proactive(user_id: str) -> dict:
     if today_count >= DAILY_LIMIT:
         return {"should_send": False, "reason": "daily_limit"}
     
-    # 生成消息
-    message = await generate_proactive_message(last_msg, minutes_ago, level)
+    # 生成消息序列
+    msg_list = await generate_proactive_messages(last_msg, minutes_ago)
     
-    # 保存到待发送队列
-    save_pending_message(user_id, message, minutes_ago, last_msg[:50])
+    # 保存每条消息到待发送队列
+    for msg in msg_list:
+        save_pending_message(user_id, msg, minutes_ago, last_msg[:50])
     
-    logger.info(f"Proactive message generated for {user_id[:8]}... "
-                f"level={level}, silence={minutes_ago}min, msg={message[:30]}...")
+    logger.info(f"Proactive messages generated for {user_id[:8]}... "
+                f"level={level}, silence={minutes_ago}min, count={len(msg_list)}")
     
     return {
         "should_send": True,
-        "message": message,
+        "messages": msg_list,
         "level": level,
         "silence_minutes": minutes_ago,
         "created_at": now
@@ -189,8 +238,6 @@ async def check_and_generate_proactive(user_id: str) -> dict:
 
 async def run_proactive_check():
     """后台定时任务：扫描所有活跃用户，检查是否需要主动消息"""
-    from memory import get_user_info
-    
     logger.info("Running proactive check...")
     
     # 获取所有有聊天记录的用户
@@ -215,7 +262,7 @@ async def run_proactive_check():
             logger.error(f"Proactive check failed for {user_id[:8]}...: {e}")
     
     if results:
-        logger.info(f"Proactive check complete: {len(results)} messages generated")
+        logger.info(f"Proactive check complete: {len(results)} users with new messages")
     return results
 
 
