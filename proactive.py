@@ -194,10 +194,9 @@ async def run_proactive_check():
     logger.info("Running proactive check...")
     
     # 获取所有有聊天记录的用户
-    import sqlite3
-    from config import DB_PATH
+    from memory import _get_conn
     
-    conn = sqlite3.connect(DB_PATH, timeout=5)
+    conn = _get_conn()
     try:
         rows = conn.execute(
             "SELECT DISTINCT user_id FROM chat WHERE role = 'user'"

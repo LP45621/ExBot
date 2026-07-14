@@ -453,8 +453,13 @@ async def shutdown():
 
 
 @app.post("/api/debug/force_proactive")
-async def force_proactive(body: dict):
-    """调试接口：强制触发主动消息生成"""
+async def force_proactive(body: dict, request: Request):
+    """调试接口：强制触发主动消息生成（仅限本地访问）"""
+    # 安全检查：只允许本地访问
+    client_ip = request.client.host if request.client else ""
+    if client_ip not in ("127.0.0.1", "::1", "localhost"):
+        return {"error": "仅限本地访问"}
+    
     user_id = body.get("user_id", "")
     if not user_id:
         return {"error": "需要user_id"}
