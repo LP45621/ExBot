@@ -205,12 +205,27 @@ def split_reply(text: str) -> list:
         sub_parts = _split_by_comma(part)
         result.extend(sub_parts)
 
-    # 合并过短的（<2字）到前一条
-    merged = []
+    # 第三步：对每条仍含空格的消息，按空格再拆（模拟真人分段打字）
+    final = []
     for s in result:
-        if merged and len(s) < 2:
+        if ' ' in s and len(s) > 6:
+            chunks = [c.strip() for c in s.split(' ') if c.strip()]
+            if len(chunks) >= 2:
+                final.extend(chunks)
+            else:
+                final.append(s)
+        else:
+            final.append(s)
+
+    # 合并过短的（空字符串）到前一条，但允许单字语气词独立（嗯 啊 哦 哈）
+    _standalone_chars = set("嗯啊哦哈哈欸嘻呀哇")
+    merged = []
+    for s in final:
+        if not s:
+            continue
+        if merged and len(s) == 1 and s not in _standalone_chars:
             merged[-1] += s
-        elif merged and len(merged[-1]) < 2:
+        elif merged and len(merged[-1]) == 1 and merged[-1] not in _standalone_chars:
             merged[-1] += s
         else:
             merged.append(s)

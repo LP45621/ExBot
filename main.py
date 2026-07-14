@@ -24,6 +24,20 @@ from engine import split_reply, detect_emotion, detect_intent
 from safety import filter_input, get_safety_response, check_crisis
 from reply_fallback import get_fallback_reply
 
+async def _send_parts_sequentially(user_id: str, parts: list):
+    """逐条延迟发送多条消息，模拟真人打字节奏"""
+    from wechat_api import send_custom_message
+    for i, part in enumerate(parts):
+        delay = random.uniform(1.5, 3.0)
+        await asyncio.sleep(delay)
+        ok = await send_custom_message(user_id, part)
+        if ok:
+            logger.info(f"Multi-msg [{i+1}/{len(parts)}] sent: {part[:20]}...")
+        else:
+            logger.warning(f"Multi-msg [{i+1}/{len(parts)}] FAILED: {part[:20]}...")
+            break  # 发送失败就停止，避免无意义重试
+
+
 # 缺席检测：48小时未对话 → 温暖归回钩子
 _absence_check = {}  # user_id → 上次检测时间
 
@@ -161,9 +175,13 @@ async def _bg_generate_reply(msg_id: str, user_id: str, content: str, request_id
         _reply_cache[msg_id] = reply
         logger.info(f"[{request_id}] Background reply ready for retry: {reply[:30]}...")
 
-        # 主动推送：万一微信重试已经放弃，走客服消息兜底
-        from wechat_api import send_custom_reply
-        asyncio.create_task(send_custom_reply(user_id, msg_id, reply))
+        # 主动推送：走客服消息，支持多消息拆分
+        parts = split_reply(reply)
+        if parts and len(parts) > 1:
+            asyncio.create_task(_send_parts_sequentially(user_id, parts))
+        else:
+            from wechat_api import send_custom_reply
+            asyncio.create_task(send_custom_reply(user_id, msg_id, reply))
 
     except Exception as e:
         logger.error(f"[{request_id}] Background reply failed: {e}")
@@ -327,10 +345,20 @@ async def handle_message(request: Request):
         else:
             reply = "收到啦～但我只看得懂文字消息哦～"
 
-        # 多消息拆分（网页端逐条发送；微信通道受协议限制只能一条）
+        # 多消息拆分：第一条被动回复，后续逐条走客服API
         parts = split_reply(reply)
         if parts and len(parts) > 1:
-            reply = "\n\n".join(parts)
+            first_part = parts[0]
+            remaining = parts[1:]
+            # 后台逐条发送剩余消息（间隔1.5-3秒，模拟真人打字）
+            from wechat_api import send_custom_message
+            asyncio.create_task(
+                _send_parts_sequentially(user_id, remaining)
+            )
+            return PlainTextResponse(
+                _build_xml(user_id, to_user, first_part),
+                media_type="application/xml"
+            )
 
         return PlainTextResponse(_build_xml(user_id, to_user, reply),
                                  media_type="application/xml")
