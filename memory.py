@@ -88,6 +88,18 @@ def get_history(user_id: str, limit: int = 0) -> List[Tuple[str, str]]:
         conn.close()
 
 
+def get_last_message_time(user_id: str) -> float:
+    """获取用户最后一条消息的时间戳（0=无记录）"""
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT MAX(time) FROM chat WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return row[0] if row and row[0] else 0
+    finally:
+        conn.close()
+
+
 def get_user_summary(user_id: str) -> str:
     """获取用户摘要"""
     conn = _get_conn()

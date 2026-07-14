@@ -122,7 +122,7 @@ function switchConversation(convId){
     currentConvId=convId;
     chat.innerHTML='';
     const msgs=getConvMessages(convId);
-    msgs.forEach(m=>addMsg(m.text,m.who,false));
+    msgs.forEach(m=>addMsg(m.text,m.who,false,m.time));
     renderConvList();
 }
 
@@ -150,10 +150,15 @@ function updateConvPreview(){
 }
 
 // 消息管理
-function addMsg(text,who,save=true){
+function addMsg(text,who,save=true,timestamp){
+    const now=timestamp?new Date(timestamp):new Date();
+    const timeStr=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
+    
     const div=document.createElement('div');div.className='msg '+who;
     const b=document.createElement('div');b.className='bubble';b.textContent=text;
-    div.appendChild(b);chat.appendChild(div);chat.scrollTop=chat.scrollHeight;
+    const ts=document.createElement('div');ts.className='timestamp';ts.style.cssText='font-size:11px;color:#999;margin-top:2px;padding:0 14px;'+(who==='user'?'text-align:right':'');
+    ts.textContent=timeStr;
+    div.appendChild(b);chat.appendChild(div);chat.appendChild(ts);chat.scrollTop=chat.scrollHeight;
     if(save&&currentConvId){
         const msgs=getConvMessages(currentConvId);
         msgs.push({text,who,time:Date.now()});
@@ -289,7 +294,7 @@ setInterval(updateDebug,5000);
                 "total_requests": 0,
                 "total_messages": 0,
                 "total_errors": 0,
-                "uptime": time.time() - mood.mood_history[0] if mood.mood_history else 0,
+                "uptime": 0,
             },
             "memories": memories,
             "user_messages": get_message_count(user_id) if user_id else 0,
@@ -356,6 +361,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .msg .content{max-width:70%;padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.6;word-break:break-word}
 .msg.user .content{background:#95ec69;color:#000;border-bottom-right-radius:4px;margin-right:8px}
 .msg.ai .content{background:#f0f0f0;color:#000;border-bottom-left-radius:4px;margin-left:8px}
+.msg .timestamp{font-size:11px;color:#999;margin-top:4px;padding:0 8px}
+.msg.user .timestamp{text-align:right}
+.msg.ai .timestamp{text-align:left}
 #input-area{padding:16px 20px;border-top:1px solid #e5e5e5;background:#fff}
 #input-wrapper{max-width:800px;margin:0 auto;display:flex;gap:12px;align-items:flex-end}
 #input{flex:1;border:1px solid #ddd;border-radius:12px;padding:12px 16px;font-size:14px;outline:none;resize:none;min-height:44px;max-height:200px;font-family:inherit}
@@ -424,7 +432,7 @@ function switchConversation(convId){
     if(msgs.length===0){
         messages.innerHTML='<div class="welcome"><h2>👋 你好！</h2><p>我是AI助手，有什么可以帮你的？</p></div>';
     }else{
-        msgs.forEach(m=>addMsg(m.text,m.who,false));
+        msgs.forEach(m=>addMsg(m.text,m.who,false,m.time));
     }
     renderConvList();
 }
@@ -442,18 +450,24 @@ function renderConvList(){
     });
 }
 
-function addMsg(text,who,save=true){
+function addMsg(text,who,save=true,timestamp){
     const welcome=messages.querySelector('.welcome');
     if(welcome)welcome.remove();
+    
+    const now=timestamp?new Date(timestamp):new Date();
+    const timeStr=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
     
     const div=document.createElement('div');div.className='msg '+who;
     const avatar=document.createElement('div');avatar.className='avatar';
     avatar.textContent=who==='user'?'我':'AI';
     const content=document.createElement('div');content.className='content';
     content.textContent=text;
+    const ts=document.createElement('div');ts.className='timestamp';ts.textContent=timeStr;
+    
     if(who==='user'){div.appendChild(content);div.appendChild(avatar);}
     else{div.appendChild(avatar);div.appendChild(content);}
     messages.appendChild(div);
+    messages.appendChild(ts);
     messages.scrollTop=messages.scrollHeight;
     
     if(save&&currentConvId){

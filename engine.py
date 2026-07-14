@@ -115,6 +115,22 @@ def build_persona(user_memory: dict, emotion: str, user_msg: str = "",
     first_met = user_memory.get("first_met", time.time())
     days_known = max(1, int((time.time() - first_met) / 86400))
 
+    # 时间感知：上次聊是多久前
+    from memory import get_last_message_time
+    last_msg_ts = get_last_message_time(user_memory.get("user_id", ""))
+    if last_msg_ts > 0:
+        seconds_ago = int(time.time() - last_msg_ts)
+        if seconds_ago < 300:
+            time_context = "刚刚还在聊"
+        elif seconds_ago < 3600:
+            time_context = f"{seconds_ago // 60}分钟前聊过"
+        elif seconds_ago < 86400:
+            time_context = f"{seconds_ago // 3600}小时前聊过"
+        else:
+            time_context = f"{seconds_ago // 86400}天没聊了"
+    else:
+        time_context = "第一次聊"
+
     # L3 记忆层：按当前话题匹配
     memories = get_memory_system().recall(user_memory.get("user_id", ""), user_msg, top_k=3)
     key_memories = "；".join([m["content"] for m in memories]) if memories else "暂无"
@@ -160,6 +176,7 @@ def build_persona(user_memory: dict, emotion: str, user_msg: str = "",
 对方：{nickname}，感觉{user_emotion_desc}
 你：{ai_mood}
 认识{days_known}天 共聊{total_msgs}条
+时间感知：{time_context}
 喜好：{preferences}
 记忆：{key_memories}
 {milestone if milestone else ""}
