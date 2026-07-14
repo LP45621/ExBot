@@ -327,6 +327,36 @@ setInterval(updateDebug,5000);
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    @app.get("/api/pending_messages")
+    async def api_pending_messages(user_id: str = ""):
+        """获取用户未读的主动消息"""
+        from memory import get_pending_messages, mark_pending_delivered
+        
+        if not user_id:
+            return {"messages": []}
+        
+        try:
+            pending = get_pending_messages(user_id)
+            if pending:
+                # 标记为已送达
+                msg_ids = [m["id"] for m in pending]
+                mark_pending_delivered(msg_ids)
+                
+                # 格式化返回
+                messages = []
+                for p in pending:
+                    ts = p["created_at"]
+                    messages.append({
+                        "content": p["content"],
+                        "timestamp": ts,
+                        "silence_minutes": p["silence_minutes"],
+                        "is_proactive": True
+                    })
+                return {"messages": messages}
+            return {"messages": []}
+        except Exception as e:
+            return {"messages": [], "error": str(e)}
+
     @app.get("/chat", response_class=HTMLResponse)
     async def chat_page():
         """DeepSeek风格聊天界面"""
@@ -519,8 +549,73 @@ input.onkeydown=e=>{
     if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
 };
 
+// 主动消息轮询
+async function checkPendingMessages(){
+    try{
+        const r=await fetch('/api/pending_messages?user_id='+uid);
+        const d=await r.json();
+        if(d.messages && d.messages.length>0){
+            // 显示系统提示线
+            const divider=document.createElement('div');
+            divider.style.cssText='text-align:center;color:#999;font-size:12px;margin:16px 0;position:relative';
+            divider.innerHTML='<span style="background:#fff;padding:0 12px;position:relative;z-index:1">—— 你离开的这段时间 ——</span>';
+            const line=document.createElement('div');
+            line.style.cssText='position:absolute;top:50%;left:0;right:0;height:1px;background:#ddd';
+            divider.style.position='relative';
+            divider.insertBefore(line,divider.firstChild);
+            messages.appendChild(divider);
+            
+            d.messages.forEach(m=>{
+                addProactiveMsg(m.content,m.timestamp,m.silence_minutes);
+            });
+        }
+    }catch(e){}
+}
+
+function addProactiveMsg(text,timestamp,silenceMinutes){
+    const welcome=messages.querySelector('.welcome');
+    if(welcome)welcome.remove();
+    
+    const now=new Date(timestamp*1000);
+    const timeStr=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
+    
+    const div=document.createElement('div');div.className='msg ai';
+    const avatar=document.createElement('div');avatar.className='avatar';
+    avatar.style.cssText='width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;background:#4a90d9;color:#fff;position:relative';
+    avatar.textContent='AI';
+    // 脉冲绿点
+    const pulse=document.createElement('div');
+    pulse.style.cssText='position:absolute;bottom:0;right:0;width:8px;height:8px;background:#52c41a;border-radius:50%;animation:pulse 2s infinite';
+    avatar.appendChild(pulse);
+    
+    const content=document.createElement('div');content.className='content';
+    content.style.cssText='max-width:70%;padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.6;word-break:break-word;background:#f0f0f0;color:#000;border-bottom-left-radius:4px;margin-left:8px';
+    content.textContent=text;
+    
+    const ts=document.createElement('div');ts.className='timestamp';
+    ts.style.cssText='font-size:11px;color:#999;margin-top:4px;padding:0 8px;text-align:left';
+    const timeAgo=Math.floor((Date.now()/1000)-timestamp);
+    const timeAgoText=timeAgo>3600?Math.floor(timeAgo/3600)+'小时前':timeAgo>60?Math.floor(timeAgo/60)+'分钟前':'刚刚';
+    ts.textContent=timeStr+' · 已发出'+timeAgoText;
+    
+    div.appendChild(avatar);div.appendChild(content);
+    messages.appendChild(div);
+    messages.appendChild(ts);
+    messages.scrollTop=messages.scrollHeight;
+}
+
+// 脉冲动画
+const style=document.createElement('style');
+style.textContent='@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(82,196,26,0.7)}70%{box-shadow:0 0 0 6px rgba(82,196,26,0)}100%{box-shadow:0 0 0 0 rgba(82,196,26,0)}}';
+document.head.appendChild(style);
+
 // 初始化
 const convs=getConversations();
 if(convs.length>0){switchConversation(convs[0].id);}
 else{newConversation();}
+
+// 启动时检查主动消息
+checkPendingMessages();
+// 每30秒轮询
+setInterval(checkPendingMessages,30000);
 </script></body></html>"""

@@ -185,3 +185,118 @@ def get_user_info(user_id: str) -> dict:
         return {}
     finally:
         conn.close()
+
+
+# ========== 主动消息系统 ==========
+
+def _ensure_pending_table():
+    """确保 pending_messages 表存在"""
+    conn = _get_conn()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                delivered INTEGER DEFAULT 0,
+                delivered_at INTEGER,
+                silence_minutes INTEGER DEFAULT 0,
+                last_topic TEXT DEFAULT ''
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_user ON pending_messages(user_id, delivered)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_pending_message(user_id: str, content: str, silence_minutes: int = 0, last_topic: str = ""):
+    """保存待发送的主动消息"""
+    _ensure_pending_table()
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO pending_messages (user_id, content, created_at, silence_minutes, last_topic) VALUES (?, ?, ?, ?, ?)",
+            (user_id, content, int(time.time()), silence_minutes, last_topic)
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+
+
+def get_pending_messages(user_id: str) -> list:
+    """获取用户未读的主动消息"""
+    _ensure_pending_table()
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, content, created_at, silence_minutes FROM pending_messages WHERE user_id = ? AND delivered = 0 ORDER BY created_at",
+            (user_id,)
+        ).fetchall()
+        return [{"id": r[0], "content": r[1], "created_at": r[2], "silence_minutes": r[3]} for r in rows]
+    finally:
+        conn.close()
+
+
+def mark_pending_delivered(msg_ids: list):
+    """标记主动消息已送达"""
+    if not msg_ids:
+        return
+    _ensure_pending_table()
+    conn = _get_conn()
+    try:
+        placeholders = ",".join(["?"] * len(msg_ids))
+        conn.execute(
+            f"UPDATE pending_messages SET delivered = 1, delivered_at = ? WHERE id IN ({placeholders})",
+            [int(time.time())] + list(msg_ids)
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+
+
+def get_last_initiative_time(user_id: str) -> int:
+    """获取上次主动消息发送时间"""
+    _ensure_pending_table()
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT MAX(created_at) FROM pending_messages WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()
+        return row[0] if row and row[0] else 0
+    finally:
+        conn.close()
+
+
+def get_today_initiative_count(user_id: str) -> int:
+    """获取今日已发送的主动消息数量"""
+    _ensure_pending_table()
+    today_start = int(time.time()) - (int(time.time()) % 86400)
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM pending_messages WHERE user_id = ? AND created_at >= ?",
+            (user_id, today_start)
+        ).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
+def get_last_user_message(user_id: str) -> Tuple[str, int]:
+    """获取用户最后一条消息内容和时间"""
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT content, time FROM chat WHERE user_id = ? AND role = 'user' ORDER BY time DESC LIMIT 1",
+            (user_id,)
+        ).fetchone()
+        return (row[0], row[1]) if row else ("", 0)
+    finally:
+        conn.close()

@@ -438,12 +438,30 @@ async def startup():
     # 注册本地测试界面（浏览器直接聊，不走微信）
     from test_chat import register_test_routes
     register_test_routes(app)
+    
+    # 启动主动消息调度器
+    from proactive import proactive_scheduler
+    asyncio.create_task(proactive_scheduler())
+    logger.info("Proactive scheduler started")
+    
     logger.info("Server ready!")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("Shutting down server...")
+
+
+@app.post("/api/debug/force_proactive")
+async def force_proactive(body: dict):
+    """调试接口：强制触发主动消息生成"""
+    user_id = body.get("user_id", "")
+    if not user_id:
+        return {"error": "需要user_id"}
+    
+    from proactive import check_and_generate_proactive
+    result = await check_and_generate_proactive(user_id)
+    return result
 
 
 if __name__ == "__main__":
