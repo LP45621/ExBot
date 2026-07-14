@@ -42,7 +42,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f5f5;
 #sidebar .conv-item .conv-preview{margin-top:4px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sidebar .conv-item.active .conv-time,#sidebar .conv-item.active .conv-preview{color:#1a1a2e}
 #main{flex:1;display:flex;flex-direction:column}
-#chat{flex:1;overflow-y:auto;padding:16px;max-width:600px;margin:0 auto;width:100%}
+#chat{flex:1;overflow-y:auto;padding:16px;max-width:600px;margin:0 auto;width:100%;background:url('/static/bg.png') center/cover no-repeat}
 .msg{margin:8px 0;display:flex}
 .msg.user{justify-content:flex-end}
 .msg.ai{justify-content:start}
@@ -351,7 +351,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #main{flex:1;display:flex;flex-direction:column;background:#fff}
 #header{padding:12px 20px;border-bottom:1px solid #e5e5e5;display:flex;align-items:center;gap:12px}
 #header .model-select{padding:6px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;background:#fff}
-#messages{flex:1;overflow-y:auto;padding:20px;max-width:800px;margin:0 auto;width:100%}
+#messages{flex:1;overflow-y:auto;padding:20px;max-width:800px;margin:0 auto;width:100%;background:url('/static/bg.png') center/cover no-repeat}
 .msg{margin:16px 0;display:flex}
 .msg.user{justify-content:flex-end}
 .msg.ai{justify-content:start}
