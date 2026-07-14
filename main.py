@@ -177,6 +177,13 @@ async def _bg_generate_reply(msg_id: str, user_id: str, content: str, request_id
 app = FastAPI(title="微信AI陪伴助手")
 
 
+@app.get("/")
+async def root():
+    """首页：跳转到聊天界面"""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/chat")
+
+
 @app.get("/wechat")
 async def verify(request: Request):
     """微信服务器验证"""
