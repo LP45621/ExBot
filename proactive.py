@@ -1,4 +1,4 @@
-"""主动消息系统 v2 —— 消息序列生成（2-3条连发）"""
+"""主动消息系统 v3 —— 消息序列生成（1-3条随机）+ 未回复停止追问"""
 import time
 import json
 import random
@@ -22,6 +22,9 @@ COOLDOWN_SECONDS = 60 * 60  # 60分钟
 
 # 每日上限
 DAILY_LIMIT = 6
+
+# 未回复上限（超过此次数停止追问）
+MAX_UNANSWERED = 2
 
 
 def get_silence_level(seconds_ago: int) -> str:
@@ -65,9 +68,6 @@ def extract_topic(last_message: str) -> str:
     if not last_message:
         return "聊天"
     
-    # 去掉常见无意义词
-    stop_words = {"了", "的", "吧", "吗", "呢", "啊", "呀", "哦", "嗯", "我", "你", "在", "是"}
-    
     # 提取关键词：取最后一条消息的核心内容
     msg = last_message.strip()
     
@@ -102,23 +102,35 @@ def detect_emotion_tag(last_message: str) -> str:
     return "平淡"
 
 
-def build_proactive_prompt(last_topic: str, last_emotion: str, silence_minutes: int) -> str:
-    """构建极简Prompt（只传3个变量）"""
+def build_proactive_prompt(last_topic: str, last_emotion: str, silence_minutes: int, unanswered_count: int) -> str:
+    """构建极简Prompt（只传变量）"""
     time_ctx = get_time_context()
     
+    # 根据未回复次数调整语气
+    if unanswered_count >= 2:
+        tone_hint = "语气要更轻，不要追问，只是自言自语式地分享点小事，给他台阶"
+    else:
+        tone_hint = "可以稍微追问，但不要太强势"
+    
+    # 随机生成1-3条
+    count = random.randint(1, 3)
+    
     return f"""# 角色与目标
-你是粘人细腻的女友。当男友久不回复时，生成2~3条连续微信短句（数组形式），模拟真人边等边碎碎念。
+你是粘人细腻的女友。当男友久不回复时，生成{count}条连续微信短句（数组形式），模拟真人边等边碎碎念。
 
 # 输入变量
 1. last_topic：用户最后提到的具体事物：「{last_topic}」
 2. last_emotion：用户最后情绪：{last_emotion}
 3. silence_min：沉默分钟数：{silence_minutes}
+4. 未回复次数：{unanswered_count}
 
 # 生成规则（硬性）
-- 输出格式：仅输出 JSON 数组，如 ["句子1", "句子2"] 或 ["句子1", "句子2", "句子3"]
+- 输出格式：仅输出 JSON 数组，如 ["句子1"] 或 ["句子1", "句子2"] 或 ["句子1", "句子2", "句子3"]
+- 生成{count}条消息
 - 第1条：必须包含 last_topic 原词，并共情 last_emotion（累就心疼，烦就顺毛，开心就调侃）
-- 第2条：必须提及"快{silence_minutes}分钟了"或"这么久"，并附带一句自己在干嘛
-- 第3条（如有）：必须针对 last_topic 提出一个具体追问
+- 第2条（如有）：提及"快{silence_minutes}分钟了"或"这么久"，附带一句自己在干嘛
+- 第3条（如有）：针对 last_topic 提出一个具体追问
+- {tone_hint}
 - 单条字数：严格 ≤ 25 个汉字
 - 禁止：说教、讲大道理、发长句、加括号备注、加表情符号
 
@@ -145,8 +157,8 @@ def get_fallback_messages(last_topic: str, silence_minutes: int) -> list:
         ]
 
 
-async def generate_proactive_messages(last_message: str, silence_minutes: int) -> list:
-    """生成主动消息序列（2-3条）"""
+async def generate_proactive_messages(last_message: str, silence_minutes: int, unanswered_count: int = 0) -> list:
+    """生成主动消息序列（1-3条随机）"""
     from ai import call_deepseek
     
     # 提取变量
@@ -154,7 +166,7 @@ async def generate_proactive_messages(last_message: str, silence_minutes: int) -
     last_emotion = detect_emotion_tag(last_message)
     
     # 构建极简Prompt
-    prompt = build_proactive_prompt(last_topic, last_emotion, silence_minutes)
+    prompt = build_proactive_prompt(last_topic, last_emotion, silence_minutes, unanswered_count)
     messages = [{"role": "user", "content": prompt}]
     
     try:
@@ -166,16 +178,36 @@ async def generate_proactive_messages(last_message: str, silence_minutes: int) -
             json_match = re.search(r'\[.*\]', reply, re.DOTALL)
             if json_match:
                 msg_list = json.loads(json_match.group())
-                if isinstance(msg_list, list) and len(msg_list) >= 2:
+                if isinstance(msg_list, list) and len(msg_list) >= 1:
                     # 过滤并验证
                     valid_msgs = [m.strip() for m in msg_list if isinstance(m, str) and len(m.strip()) > 1]
-                    if len(valid_msgs) >= 2:
+                    if len(valid_msgs) >= 1:
                         return valid_msgs[:3]  # 最多3条
     except Exception as e:
         logger.warning(f"Proactive message generation failed: {e}")
     
     # 兜底：本地模板
     return get_fallback_messages(last_topic, silence_minutes)
+
+
+def get_unanswered_count(user_id: str) -> int:
+    """获取用户未回复的主动消息次数"""
+    from memory import _get_conn
+    
+    conn = _get_conn()
+    try:
+        # 查询最近的主动消息数量（未收到用户回复）
+        row = conn.execute("""
+            SELECT COUNT(*) FROM pending_messages 
+            WHERE user_id = ? AND delivered = 1 
+            AND created_at > (
+                SELECT COALESCE(MAX(time), 0) FROM chat 
+                WHERE user_id = ? AND role = 'user'
+            )
+        """, (user_id, user_id)).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
 
 
 async def check_and_generate_proactive(user_id: str) -> dict:
@@ -217,21 +249,27 @@ async def check_and_generate_proactive(user_id: str) -> dict:
     if today_count >= DAILY_LIMIT:
         return {"should_send": False, "reason": "daily_limit"}
     
+    # 检查未回复次数（超过上限停止追问）
+    unanswered_count = get_unanswered_count(user_id)
+    if unanswered_count >= MAX_UNANSWERED:
+        return {"should_send": False, "reason": "max_unanswered"}
+    
     # 生成消息序列
-    msg_list = await generate_proactive_messages(last_msg, minutes_ago)
+    msg_list = await generate_proactive_messages(last_msg, minutes_ago, unanswered_count)
     
     # 保存每条消息到待发送队列
     for msg in msg_list:
         save_pending_message(user_id, msg, minutes_ago, last_msg[:50])
     
     logger.info(f"Proactive messages generated for {user_id[:8]}... "
-                f"level={level}, silence={minutes_ago}min, count={len(msg_list)}")
+                f"level={level}, silence={minutes_ago}min, count={len(msg_list)}, unanswered={unanswered_count}")
     
     return {
         "should_send": True,
         "messages": msg_list,
         "level": level,
         "silence_minutes": minutes_ago,
+        "unanswered_count": unanswered_count,
         "created_at": now
     }
 

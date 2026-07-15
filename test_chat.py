@@ -412,6 +412,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <button id="new-chat" onclick="newConversation()">+ 新对话</button>
 </div>
 <div id="conv-list"></div>
+<div style="padding:12px;border-top:1px solid #333">
+<button onclick="exportChat()" style="width:100%;padding:8px;background:#2d2d3e;border:1px solid #444;border-radius:6px;color:#fff;cursor:pointer;font-size:12px">📥 导出聊天记录</button>
+</div>
 </div>
 <div id="main">
 <div id="header">
@@ -480,24 +483,64 @@ function renderConvList(){
     });
 }
 
+// 微信风格时间格式化
+function formatTime(ts){
+    const d=new Date(ts);
+    const now=new Date();
+    const h=d.getHours().toString().padStart(2,'0');
+    const m=d.getMinutes().toString().padStart(2,'0');
+    const timeStr=h+':'+m;
+    
+    // 今天的时间
+    const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+    const msgDay=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+    const diffDays=Math.floor((today-msgDay)/86400000);
+    
+    if(diffDays===0) return timeStr; // 今天只显示时间
+    if(diffDays===1) return '昨天 '+timeStr;
+    if(diffDays===2) return '前天 '+timeStr;
+    
+    // 本周内
+    const dayOfWeek=d.getDay(); // 0=周日
+    const weekNames=['周日','周一','周二','周三','周四','周五','周六'];
+    if(diffDays<=7) return weekNames[dayOfWeek]+' '+timeStr;
+    
+    // 更久远显示完整日期
+    return (d.getMonth()+1)+'/'+d.getDate()+' '+timeStr;
+}
+
+// 检查是否需要显示时间（超过3分钟才显示）
+let lastMsgTime=0;
+function shouldShowTime(ts){
+    if(!lastMsgTime)return true;
+    return (ts-lastMsgTime)>180000; // 3分钟=180000毫秒
+}
+
 function addMsg(text,who,save=true,timestamp){
     const welcome=messages.querySelector('.welcome');
     if(welcome)welcome.remove();
     
     const now=timestamp?new Date(timestamp):new Date();
-    const timeStr=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
+    const ts=now.getTime();
+    
+    // 检查是否需要显示时间（超过3分钟）
+    if(shouldShowTime(ts)){
+        const timeDiv=document.createElement('div');
+        timeDiv.style.cssText='text-align:center;color:#999;font-size:12px;margin:16px 0 8px';
+        timeDiv.textContent=formatTime(ts);
+        messages.appendChild(timeDiv);
+        lastMsgTime=ts;
+    }
     
     const div=document.createElement('div');div.className='msg '+who;
     const avatar=document.createElement('div');avatar.className='avatar';
     avatar.textContent=who==='user'?'我':'AI';
     const content=document.createElement('div');content.className='content';
     content.textContent=text;
-    const ts=document.createElement('div');ts.className='timestamp';ts.textContent=timeStr;
     
     if(who==='user'){div.appendChild(content);div.appendChild(avatar);}
     else{div.appendChild(avatar);div.appendChild(content);}
     messages.appendChild(div);
-    messages.appendChild(ts);
     messages.scrollTop=messages.scrollHeight;
     
     if(save&&currentConvId){
@@ -611,6 +654,23 @@ function addProactiveMsg(text,timestamp,silenceMinutes){
 const style=document.createElement('style');
 style.textContent='@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(82,196,26,0.7)}70%{box-shadow:0 0 0 6px rgba(82,196,26,0)}100%{box-shadow:0 0 0 0 rgba(82,196,26,0)}}';
 document.head.appendChild(style);
+
+// 导出聊天记录
+function exportChat(){
+    if(!currentConvId){alert('没有对话');return;}
+    const msgs=getConvMessages(currentConvId);
+    if(msgs.length===0){alert('没有聊天记录');return;}
+    const lines=msgs.map(m=>{
+        const d=new Date(m.time);
+        const timeStr=d.getFullYear()+'/'+(d.getMonth()+1)+'/'+d.getDate()+' '+d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
+        return '['+timeStr+'] '+(m.who==='user'?'我':'AI')+': '+m.text;
+    });
+    const text=lines.join('\n');
+    const blob=new Blob([text],{type:'text/plain;charset=utf-8'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download='chat_'+new Date().toISOString().slice(0,10)+'.txt';
+    a.click();
+}
 
 // 初始化
 const convs=getConversations();
