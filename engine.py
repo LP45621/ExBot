@@ -72,11 +72,15 @@ def get_simple_reply(intent: str, raw_msg: str = "") -> str:
 def should_use_llm(user_message: str, emotion: str) -> bool:
     """判断是否需要调用LLM"""
     stripped = user_message.strip().rstrip("？?。!~…")
+    
+    # 只有完全匹配模板关键词才用模板
     for keyword in MODEL_ROUTING["template"]:
         if stripped == keyword:
             return False
-    if len(user_message) < 6 and emotion == "neutral":
-        return False
+    
+    # 短消息（<6字）且情绪中性 → 也走AI，让AI更有真实感
+    # 不再因为短就用模板
+    
     return True
 
 
