@@ -159,7 +159,6 @@ def build_persona(user_memory: dict, emotion: str, user_msg: str = "",
     rhythm_hint = rhythm.get_rhythm_hint(user_id, user_msg, emotion=emotion)
 
     # 关系里程碑
-    total_msgs = get_message_count(user_id) if user_id in globals() else 0
     # 用 memory 模块估算消息数
     from memory import get_message_count as _gmc
     total_msgs = _gmc(user_id)

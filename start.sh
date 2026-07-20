@@ -2,7 +2,7 @@
 
 echo ""
 echo "  ╔═══════════════════════════════════════╗"
-echo "  ║     WeChat AI Companion v1.8.1        ║"
+echo "  ║     WeChat AI Companion v1.8.3        ║"
 echo "  ║     https://github.com/LP45621/ExBot  ║"
 echo "  ╚═══════════════════════════════════════╝"
 echo ""

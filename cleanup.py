@@ -6,7 +6,8 @@ import io
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-DB_PATH = "chat.db"
+from config import DB_PATH
+
 
 def cleanup_stale_dialogs(days_threshold=7):
     """清理超过N天没有新消息的对话

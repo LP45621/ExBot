@@ -2,7 +2,11 @@
 import time
 import json
 import os
+import logging
 from fastapi import FastAPI, Request
+
+logger = logging.getLogger("test_chat")
+logging.basicConfig(level=logging.INFO)
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ai import get_ai_reply
@@ -297,8 +301,8 @@ setInterval(updateDebug,5000);
                 mem_system = get_memory_system()
                 mems = mem_system.recall(user_id, "", top_k=5)
                 memories = [{"type": m.get("memory_type", "?"), "content": m.get("content", "")[:50]} for m in mems]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Memory recall failed: {e}")
 
         return {
             "mood": {
