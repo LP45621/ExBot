@@ -1,15 +1,16 @@
 # WeChat AI Companion
 
-微信公众号 AI 陪伴助手 —— 基于 DeepSeek/MiMo API 的拟人化情感陪伴系统。
+微信公众号 AI 陪伴助手 —— 基于 DeepSeek/OpenAI 兼容 API 的拟人化情感陪伴系统。
 
 ## 功能特性
 
 - 🧠 **四层提示词架构**：灵魂层(L1) + 性格层(L2) + 记忆层(L3) + 上下文层(L4)
-- 💾 **长期记忆系统**：跨会话记忆、用户画像、自动摘要
+- 💾 **长期记忆系统**：跨会话记忆、用户画像、自动摘要、时间衰减权重、情绪标签召回
 - 🎭 **情绪感知**：实时检测用户情绪，动态调整回复风格
 - ⚡ **智能路由**：简单问候秒回、复杂对话调用 LLM
 - 🔒 **安全防护**：速率限制、输入过滤、危机检测
 - 🎨 **性格可调**：用户可通过指令实时调整 AI 语气（温柔/傲娇/活泼等）
+- 🕰️ **真实聊天节奏**：支持偶尔已读不回、多段消息、防重复回复、主动消息
 
 ## 快速开始
 
@@ -32,11 +33,12 @@ cp .env.example .env
 WECHAT_TOKEN=your-wechat-token
 WECHAT_APPID=wx-your-appid
 WECHAT_APPSECRET=your-appsecret
+WECHAT_ENCODING_AES_KEY=your-encoding-aes-key
 
-# API 配置（MiMo 或 DeepSeek）
+# API 配置（DeepSeek 或其他 OpenAI 兼容服务）
 DEEPSEEK_API_KEY=tp-your-api-key
-DEEPSEEK_API_URL=https://token-plan-cn.xiaomimimo.com/v1/chat/completions
-DEEPSEEK_MODEL=mimo-v2.5-pro
+DEEPSEEK_API_URL=https://api.deepseek.com/v1/chat/completions
+DEEPSEEK_MODEL=deepseek-chat
 ```
 
 ### 3. 启动服务
@@ -86,7 +88,26 @@ python main.py
 | `/wechat` | POST | 接收微信消息 |
 | `/health` | GET | 健康检查 |
 | `/test` | GET | 网页测试界面 |
+| `/chat` | GET | 本地聊天调试界面 |
 | `/api/chat` | POST | API 对话接口 |
+| `/api/debug` | GET | 本地调试接口（仅本机访问） |
+| `/api/conversations` | GET | 本地历史会话列表（仅本机访问） |
+| `/api/history/{user_id}` | GET | 本地历史消息读取（仅本机访问） |
+
+## 记忆召回机制
+
+长期记忆保存在 SQLite 中，每条记忆包含类型、重要性、创建时间、回忆次数和情绪标签。
+
+召回排序会综合：
+
+- 当前话题相关性
+- 记忆重要性
+- 艾宾浩斯长期遗忘曲线
+- 最近 3 天的时间衰减热度
+- 当前情绪与记忆情绪标签的匹配度
+- 被反复想起后的强化权重
+
+这样最近提到的事会更容易被想起，但高重要性的长期承诺、偏好和关系事件不会因为时间变久就立刻消失。
 
 ## Docker 部署
 
@@ -106,7 +127,7 @@ docker run -d --env-file .env -p 53065:53065 wechat-ai
 ## 技术栈
 
 - **框架**: FastAPI + Uvicorn
-- **AI**: MiMo v2.5-pro / DeepSeek Chat（通过 OpenAI 兼容 API）
+- **AI**: DeepSeek Chat / OpenAI 兼容 API
 - **存储**: SQLite（聊天记录 + 记忆系统）
 - **协议**: 微信被动回复 XML
 

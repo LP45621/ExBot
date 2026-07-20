@@ -1,7 +1,6 @@
 # 敏感配置
 .wechat_token
 .env
-config.py
 *.db
 
 # Python
@@ -27,3 +26,6 @@ user_memories/*.json
 # Reasonix工具目录
 .reasonix/
 reasonix.toml
+
+# 本地配置资料/对话记录/隧道令牌
+配置相关/

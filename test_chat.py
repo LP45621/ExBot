@@ -2,11 +2,20 @@
 import time
 import json
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ai import get_ai_reply
 from engine import split_reply, _mood_engine, get_memory_system
+
+
+def _is_local_request(request: Request) -> bool:
+    client_ip = request.client.host if request.client else ""
+    return client_ip in ("127.0.0.1", "::1", "localhost")
+
+
+def _local_only_response():
+    return JSONResponse({"error": "仅限本地访问"}, status_code=403)
 
 
 def register_test_routes(app: FastAPI):
@@ -168,6 +177,7 @@ function addMsg(text,who,save=true,timestamp){
 }
 function addTyping(){const d=document.createElement('div');d.className='typing';d.id='typing';d.textContent='对方正在输入...';chat.appendChild(d);chat.scrollTop=chat.scrollHeight;}
 function removeTyping(){const t=document.getElementById('typing');if(t)t.remove();}
+function addSystemMsg(text){const d=document.createElement('div');d.style.cssText='text-align:center;color:#999;font-size:12px;margin:8px 0;padding:4px 12px;background:#f0f0f0;border-radius:12px;display:inline-block;';d.textContent=text;const w=document.createElement('div');w.style.cssText='display:flex;justify-content:center;';w.appendChild(d);chat.appendChild(w);chat.scrollTop=chat.scrollHeight;}
 
 async function send(){
     const text=input.value.trim();if(!text)return;input.value='';
@@ -260,6 +270,11 @@ setInterval(updateDebug,5000);
 
         try:
             reply = await get_ai_reply(user_id, message)
+            
+            # AI 选择不回复
+            if not reply or not reply.strip():
+                return {"reply": "", "no_reply": True}
+            
             parts = split_reply(reply)
             if parts and len(parts) > 1:
                 reply = "\n\n".join(parts)
@@ -268,8 +283,11 @@ setInterval(updateDebug,5000);
             return {"reply": f"出错啦: {str(e)}"}
 
     @app.get("/api/debug")
-    async def api_debug(user_id: str = ""):
+    async def api_debug(request: Request, user_id: str = ""):
         """调试接口：返回AI状态+用户记忆"""
+        if not _is_local_request(request):
+            return _local_only_response()
+
         from memory import get_message_count
         mood = _mood_engine
 
@@ -301,8 +319,11 @@ setInterval(updateDebug,5000);
         }
 
     @app.get("/api/backup")
-    async def api_backup(user_id: str = ""):
+    async def api_backup(request: Request, user_id: str = ""):
         """记忆备份接口：导出用户所有记忆"""
+        if not _is_local_request(request):
+            return _local_only_response()
+
         from memory import get_history, get_user_info
         from auto_memory import load_user_memory
 
@@ -326,6 +347,57 @@ setInterval(updateDebug,5000);
             }
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/conversations")
+    async def api_conversations(request: Request):
+        """获取所有对话列表（从数据库）"""
+        if not _is_local_request(request):
+            return _local_only_response()
+
+        import sqlite3
+        from config import DB_PATH
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=5)
+            rows = conn.execute(
+                "SELECT user_id, COUNT(*) as cnt, MAX(time) as last_time FROM chat GROUP BY user_id ORDER BY last_time DESC"
+            ).fetchall()
+            conn.close()
+            return {
+                "conversations": [
+                    {"user_id": r[0], "count": r[1], "last_time": r[2]}
+                    for r in rows if not r[0].startswith("test")  # 排除测试数据
+                ]
+            }
+        except Exception as e:
+            return {"conversations": [], "error": str(e)}
+
+    @app.get("/api/history/{user_id}")
+    async def api_history(request: Request, user_id: str, limit: int = 500):
+        """获取指定用户的聊天历史（含时间戳）"""
+        if not _is_local_request(request):
+            return _local_only_response()
+
+        import sqlite3
+        from config import DB_PATH
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=5)
+            if limit > 0:
+                rows = conn.execute(
+                    "SELECT role, content, time FROM chat WHERE user_id = ? ORDER BY time DESC LIMIT ?",
+                    (user_id, limit)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT role, content, time FROM chat WHERE user_id = ? ORDER BY time DESC",
+                    (user_id,)
+                ).fetchall()
+            conn.close()
+            return {
+                "user_id": user_id,
+                "messages": [{"role": r, "content": c, "time": t} for r, c, t in reversed(rows)]
+            }
+        except Exception as e:
+            return {"user_id": user_id, "messages": [], "error": str(e)}
 
     @app.get("/api/pending_messages")
     async def api_pending_messages(user_id: str = ""):
@@ -440,7 +512,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </div>
 <script>
 const messages=document.getElementById('messages'),input=document.getElementById('input');
-const uid='chat-'+Date.now();
+// 保持用户ID持久化（刷新页面不丢失）
+function getUserId(){
+    let saved=localStorage.getItem('chat_uid');
+    if(!saved){saved='chat-'+Date.now();localStorage.setItem('chat_uid',saved);}
+    return saved;
+}
+const uid=getUserId();
 let currentConvId=null;
 let isTyping=false;
 
@@ -450,6 +528,45 @@ function saveConversations(convs){localStorage.setItem('chat_convs',JSON.stringi
 function getConvMessages(convId){return JSON.parse(localStorage.getItem('chat_msg_'+convId)||'[]');}
 function saveConvMessages(convId,msgs){localStorage.setItem('chat_msg_'+convId,JSON.stringify(msgs));}
 
+// 从服务器加载历史对话列表
+async function loadFromServer(){
+    try{
+        const r=await fetch('/api/conversations');
+        const d=await r.json();
+        if(!d.conversations||d.conversations.length===0)return;
+        
+        const convs=getConversations();
+        const existingIds=new Set(convs.map(c=>c.id));
+        
+        for(const conv of d.conversations){
+            if(existingIds.has(conv.user_id))continue;
+            if(conv.user_id.startsWith('test'))continue;
+            convs.push({id:conv.user_id,time:conv.last_time*1000,preview:'('+conv.count+'条记录)',fromServer:true});
+        }
+        
+        convs.sort((a,b)=>b.time-a.time);
+        saveConversations(convs);
+        renderConvList();
+    }catch(e){console.log('Load from server failed:',e);}
+}
+
+// 从服务器加载指定对话的历史消息
+async function loadHistoryFromServer(userId){
+    try{
+        const r=await fetch('/api/history/'+encodeURIComponent(userId)+'?limit=500');
+        const d=await r.json();
+        if(!d.messages||d.messages.length===0)return null;
+        
+        const msgs=d.messages.map((m,i)=>({
+            text:m.content,
+            who:m.role==='user'?'user':'ai',
+            time:m.time>0?m.time*1000:Date.now()-((d.messages.length-i)*60000)
+        }));
+        saveConvMessages(userId,msgs);
+        return msgs;
+    }catch(e){console.log('Load history failed:',e);return null;}
+}
+
 function newConversation(){
     const convs=getConversations();
     const convId='conv_'+Date.now();
@@ -458,15 +575,28 @@ function newConversation(){
     switchConversation(convId);
 }
 
-function switchConversation(convId){
+async function switchConversation(convId){
     currentConvId=convId;
     messages.innerHTML='';
-    const msgs=getConvMessages(convId);
+    lastMsgTime=0; // 重置时间显示
+    
+    let msgs=getConvMessages(convId);
+    
+    // 如果本地没有消息，尝试从服务器加载
+    if(msgs.length===0){
+        const loaded=await loadHistoryFromServer(convId);
+        if(loaded)msgs=loaded;
+    }
+    
     if(msgs.length===0){
         messages.innerHTML='<div class="welcome"><h2>👋 你好！</h2><p>我是AI助手，有什么可以帮你的？</p></div>';
     }else{
         msgs.forEach(m=>addMsg(m.text,m.who,false,m.time));
     }
+    
+    // 更新uid为当前对话的user_id（发送消息时使用）
+    localStorage.setItem('chat_uid',convId);
+    
     renderConvList();
 }
 
@@ -551,6 +681,20 @@ function addMsg(text,who,save=true,timestamp){
     }
 }
 
+function addSystemMsg(text){
+    const welcome=messages.querySelector('.welcome');
+    if(welcome)welcome.remove();
+    
+    const div=document.createElement('div');
+    div.style.cssText='text-align:center;color:#999;font-size:12px;margin:12px 0;padding:6px 12px;background:#f5f5f5;border-radius:12px;display:inline-block;max-width:80%;margin-left:auto;margin-right:auto;';
+    div.textContent=text;
+    const wrapper=document.createElement('div');
+    wrapper.style.cssText='display:flex;justify-content:center;';
+    wrapper.appendChild(div);
+    messages.appendChild(wrapper);
+    messages.scrollTop=messages.scrollHeight;
+}
+
 function updateConvPreview(){
     if(!currentConvId)return;
     const convs=getConversations();
@@ -570,10 +714,28 @@ async function send(){
     document.getElementById('send').disabled=true;
     document.getElementById('status').textContent='思考中...';
     
+    // 每次发送时从localStorage读取最新的uid
+    const currentUid=localStorage.getItem('chat_uid')||uid;
+    
     try{
-        const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,user_id:uid})});
+        const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,user_id:currentUid})});
         const d=await r.json();
-        if(d.reply){addMsg(d.reply,'ai');}
+        if(d.no_reply){
+            // AI 选择不回复，显示灰色提示
+            addSystemMsg('对方已读不回');
+        }else if(d.reply){
+            // 拆分多条消息显示（模拟真人分段发消息）
+            const parts=d.reply.split('\n\n');
+            if(parts.length>1){
+                parts.forEach((part,i)=>{
+                    if(part.trim()){
+                        setTimeout(()=>addMsg(part.trim(),'ai'),i*800);
+                    }
+                });
+            }else{
+                addMsg(d.reply,'ai');
+            }
+        }
     }catch(e){addMsg('发送失败，请重试','ai');}
     
     isTyping=false;
@@ -595,7 +757,8 @@ input.onkeydown=e=>{
 // 主动消息轮询（支持延迟逐条发送）
 async function checkPendingMessages(){
     try{
-        const r=await fetch('/api/pending_messages?user_id='+uid);
+        const currentUid=localStorage.getItem('chat_uid')||uid;
+        const r=await fetch('/api/pending_messages?user_id='+currentUid);
         const d=await r.json();
         if(d.messages && d.messages.length>0){
             // 显示系统提示线
@@ -672,10 +835,12 @@ function exportChat(){
     a.click();
 }
 
-// 初始化
-const convs=getConversations();
-if(convs.length>0){switchConversation(convs[0].id);}
-else{newConversation();}
+// 初始化（先从服务器加载历史对话）
+loadFromServer().then(()=>{
+    const convs=getConversations();
+    if(convs.length>0){switchConversation(convs[0].id);}
+    else{newConversation();}
+});
 
 // 启动时检查主动消息
 checkPendingMessages();

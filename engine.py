@@ -136,8 +136,13 @@ def build_persona(user_memory: dict, emotion: str, user_msg: str = "",
         time_context = "第一次聊"
 
     # L3 记忆层：按当前话题匹配
-    memories = get_memory_system().recall(user_memory.get("user_id", ""), user_msg, top_k=3)
-    key_memories = "；".join([m["content"] for m in memories]) if memories else "暂无"
+    memories = get_memory_system().recall(
+        user_memory.get("user_id", ""),
+        user_msg,
+        top_k=3,
+        current_emotion=emotion,
+    )
+    key_memories = "；".join([_format_memory_for_prompt(m) for m in memories]) if memories else "暂无"
 
     ai_mood = _mood_engine.to_prompt()
 
@@ -186,6 +191,25 @@ def build_persona(user_memory: dict, emotion: str, user_msg: str = "",
 {milestone if milestone else ""}
 
 {rhythm_hint if rhythm_hint else ""}"""
+
+
+def _format_memory_for_prompt(memory: dict) -> str:
+    content = memory.get("content", "")
+    emotion_tag = memory.get("emotion_tag", "")
+    if emotion_tag and emotion_tag != "neutral":
+        emotion_desc = {
+            "happy": "开心时",
+            "sad": "难过时",
+            "angry": "生气时",
+            "tired": "累的时候",
+            "love": "亲密时",
+            "bored": "无聊时",
+            "anxious": "焦虑时",
+            "lonely": "孤单时",
+        }.get(emotion_tag, "")
+        if emotion_desc:
+            return f"{content}（{emotion_desc}提到）"
+    return content
 
 
 def build_messages(user_message: str, history: list, user_memory: dict, emotion: str,
@@ -308,6 +332,7 @@ def extract_memory_from_conversation(user_id: str, user_msg: str, ai_reply: str)
     """从对话中提取记忆"""
     memory = get_memory_system()
     msg_lower = user_msg.lower()
+    emotion = detect_emotion(user_msg)
 
     name_patterns = ["我叫", "我是", "我的名字", "叫我"]
     for pattern in name_patterns:
@@ -316,7 +341,8 @@ def extract_memory_from_conversation(user_id: str, user_msg: str, ai_reply: str)
             end = min(start + 10, len(user_msg))
             name = user_msg[start:end].strip().split()[0] if start < len(user_msg) else ""
             if name and len(name) <= 10:
-                memory.store(user_id, f"用户名字是{name}", "facts", importance=8)
+                memory.store(user_id, f"用户名字是{name}", "facts", importance=8,
+                             emotion_tag=emotion)
                 break
 
     like_patterns = ["喜欢", "爱", "最爱", "最喜欢"]
@@ -326,25 +352,27 @@ def extract_memory_from_conversation(user_id: str, user_msg: str, ai_reply: str)
             end = min(start + 20, len(user_msg))
             preference = user_msg[start:end].strip()
             if preference and len(preference) <= 20:
-                memory.store(user_id, f"用户喜欢{preference}", "preferences", importance=6)
+                memory.store(user_id, f"用户喜欢{preference}", "preferences", importance=6,
+                             emotion_tag=emotion)
             break
 
     event_patterns = ["今天", "昨天", "刚才", "之前", "上次", "下周", "明天"]
     for pattern in event_patterns:
         if pattern in msg_lower:
             event = user_msg[:50] if len(user_msg) > 50 else user_msg
-            memory.store(user_id, event, "events", importance=7)
+            memory.store(user_id, event, "events", importance=7, emotion_tag=emotion)
             break
 
     promise_patterns = ["答应", "说好", "保证", "承诺"]
     for pattern in promise_patterns:
         if pattern in msg_lower:
             promise = user_msg[:50] if len(user_msg) > 50 else user_msg
-            memory.store(user_id, promise, "promises", importance=10)
+            memory.store(user_id, promise, "promises", importance=10, emotion_tag=emotion)
             break
 
     emotion_words = ["压力", "焦虑", "迷茫", "开心", "难过", "生气"]
     for word in emotion_words:
         if word in msg_lower:
-            memory.store(user_id, f"用户最近{word}", "emotions", importance=7)
+            memory.store(user_id, f"用户最近{word}", "emotions", importance=7,
+                         emotion_tag=emotion)
             break

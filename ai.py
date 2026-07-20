@@ -181,6 +181,100 @@ async def auto_summarize(user_id: str):
         pass
 
 
+# AI 不回复的概率配置
+IGNORE_PROBABILITY = {
+    "meaningless": 0.70,   # 无意义符号（?、。、…），70%概率不回复
+    "very_short": 0.40,    # 1-2个字的消息，40%概率不回复
+    "short": 0.20,         # 3-5个字的消息，20%概率不回复
+    "bad_mood": 0.30,      # AI心情差时，30%概率不回复
+    "sulking": 0.50,       # AI闹脾气时，50%概率不回复
+    "excited": 0.05,       # AI兴奋时，5%概率不回复（几乎都会回）
+}
+
+# 无意义消息列表（直接忽略或高概率忽略）
+MEANINGLESS_MESSAGES = {'?', '？', '。', '...', '。。。', '…', '..', '..', '??', '？？'}
+
+def should_ignore_message(message: str, emotion: str) -> bool:
+    """判断AI是否应该选择不回复（模拟真人有时不回消息）"""
+    mood = _mood_engine
+    msg = message.strip()
+    
+    # 无意义消息直接高概率忽略
+    if msg in MEANINGLESS_MESSAGES or len(msg) <= 1:
+        if random.random() < IGNORE_PROBABILITY["meaningless"]:
+            logger.info(f"AI ignoring meaningless message: {msg}")
+            return True
+    
+    # 闹脾气时有概率不回复
+    if mood.is_sulking():
+        if random.random() < IGNORE_PROBABILITY["sulking"]:
+            logger.info(f"AI sulking, ignoring message: {msg[:20]}")
+            return True
+    
+    # 兴奋时几乎都会回复
+    if mood.is_excited():
+        if random.random() < IGNORE_PROBABILITY["excited"]:
+            return True
+        return False
+    
+    # 心情差时有概率不回复
+    if mood.mood < 0.3:
+        if random.random() < IGNORE_PROBABILITY["bad_mood"]:
+            logger.info(f"AI bad mood ({mood.mood:.2f}), ignoring: {msg[:20]}")
+            return True
+    
+    # 根据消息长度决定是否回复
+    msg_len = len(msg)
+    if msg_len <= 2:
+        if random.random() < IGNORE_PROBABILITY["very_short"]:
+            logger.info(f"AI ignoring very short: {msg}")
+            return True
+    elif msg_len <= 5:
+        if random.random() < IGNORE_PROBABILITY["short"]:
+            logger.info(f"AI ignoring short: {msg}")
+            return True
+    
+    return False
+
+
+# 防重复回复机制
+def _check_and_break_repetition(user_id: str, reply: str, history: list) -> str:
+    """检查回复是否和最近的回复太相似，如果是则强制换一个"""
+    if not reply or not history:
+        return reply
+    
+    # 提取最近的 assistant 回复
+    recent_replies = [content for role, content in history if role == "assistant"][-5:]
+    
+    if not recent_replies:
+        return reply
+    
+    # 检查新回复是否和最近回复重复
+    reply_short = reply[:20]  # 只比较前20个字符
+    for recent in recent_replies:
+        recent_short = recent[:20]
+        # 如果前20个字符完全相同或高度相似
+        if reply_short == recent_short or reply_short in recent_short or recent_short in reply_short:
+            # 使用备用回复
+            fallback_replies = [
+                "嗯？你说啥",
+                "怎么啦",
+                "我在呢",
+                "说吧",
+                "嗯嗯",
+                "怎么了",
+                "我在听",
+                "嗯 你说",
+                "怎么了呀",
+                "嗯？",
+            ]
+            new_reply = random.choice(fallback_replies)
+            logger.info(f"[{user_id}] Repetitive reply detected, switching to: {new_reply}")
+            return new_reply
+    
+    return reply
+
+
 async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
                       deadline: float = 0.0, skip_save_user: bool = False) -> str:
     """获取 AI 回复（主入口）"""
@@ -205,6 +299,10 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
 
     # 更新AI心情
     _mood_engine.update(emotion)
+
+    # AI 选择不回复（模拟真人行为）
+    if should_ignore_message(user_message, emotion):
+        return ""  # 返回空串表示不回复
 
     # 判断是否需要调用LLM
     if not should_use_llm(user_message, emotion):
@@ -235,6 +333,9 @@ async def get_ai_reply(user_id: str, user_message: str, request_id: str = "",
         )
     else:
         reply = await call_deepseek(messages, request_id)
+
+    # 防重复：检查是否和最近回复太相似
+    reply = _check_and_break_repetition(user_id, reply, history)
 
     # 保存回复
     if not reply or not reply.strip():

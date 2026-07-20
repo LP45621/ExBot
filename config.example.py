@@ -21,10 +21,10 @@ WECHAT_TOKEN = os.environ.get("WECHAT_TOKEN", "your-wechat-token-here")
 WECHAT_APPID = os.environ.get("WECHAT_APPID", "your-appid-here")
 WECHAT_APPSECRET = os.environ.get("WECHAT_APPSECRET", "your-appsecret-here")
 
-# API 配置（MiMo / DeepSeek）
+# API 配置（DeepSeek / OpenAI 兼容服务）
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "your-api-key-here")
-DEEPSEEK_API_URL = os.environ.get("DEEPSEEK_API_URL", "https://token-plan-cn.xiaomimimo.com/v1/chat/completions")
-DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "mimo-v2.5-pro")
+DEEPSEEK_API_URL = os.environ.get("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 # ====== 以下为业务配置，按需修改 ======
 
